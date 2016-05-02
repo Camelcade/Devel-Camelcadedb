@@ -4,9 +4,20 @@ use strict;
 use warnings;
 use Data::Dumper;
 use B::Deparse;
+use Socket;
 
 sub _passthrough_code(&;@);
 sub _pass_through();
+
+my $_debug_server_host;     # remote debugger host
+my $_debug_server_port;     # remote debugger port
+
+my $_local_debug_host;      # local debug host
+my $_local_debug_port;      # local debug port
+
+my $_debug_net_role;        # server or client, we'll use ENV for this
+my $_debug_socket;
+my $_debug_packed_address;
 
 my $_debugger_inited;
 my $_deparser;
@@ -135,6 +146,30 @@ BEGIN{
     our %dbline = ();     # actions in current file (keyed by line number)
 
     $_debugger_inited = 0;
+    $_local_debug_port = 12345;
+    $_debug_net_role = 'server';
+    $_deparser = B::Deparse->new();
+
+
+    # http://perldoc.perl.org/perlipc.html#Sockets%3a-Client%2fServer-Communication
+    if ($_debug_net_role eq 'server')
+    {
+        my $_server_socket;
+        socket( $_server_socket, PF_INET, SOCK_STREAM, getprotobyname 'tcp' ) || die "socket $!";
+        setsockopt( $_server_socket, SOL_SOCKET, SO_REUSEADDR, pack( 'l', 1 ) ) || die "socketopt $!";
+        bind( $_server_socket,
+            sockaddr_in( $_local_debug_port, $_local_debug_host ? inet_aton( $_local_debug_host ) : INADDR_ANY )
+        ) || die "bind $!";
+        listen( $_server_socket, SOMAXCONN ) || die "listen $!";
+        $_debug_packed_address = accept( $_debug_socket, $_server_socket );
+    }
+    else
+    {
+        socket( $_debug_socket, PF_INET, SOCK_STREAM, getprotobyname 'tcp' ) || die "socket: $!";
+        connect( $_debug_socket,
+            sockaddr_in( $_debug_server_port, 'tcp', inet_aton( $_debug_server_host ) )
+        ) || die "connect:  $!";
+    }
 
     $^P |= FLAG_REPORT_GOTO;
 
@@ -154,7 +189,7 @@ BEGIN{
 sub _init_debugger()
 {
     _passthrough_code {
-            $_deparser = B::Deparse->new();
+            # for now it's just skipping debugger loading
             $_debugger_inited = 1;
             print STDERR "Debugger inited \n";
         };
