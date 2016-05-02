@@ -2,16 +2,16 @@ package DB;
 use 5.008;
 use strict;
 use warnings;
+use Data::Dumper;
+use B::Deparse;
 
-sub _pass_throgh_code(&;@);
+sub _passthrough_code(&;@);
+sub _pass_through();
 
 my $_debugger_inited;
 my $_deparser;
 
 BEGIN{
-    use Data::Dumper;
-    use B::Deparse;
-
     use constant {
         FLAG_SUB_ENTER_EXIT         => 0x01,
         FLAG_LINE_BY_LINE           => 0x02,
@@ -135,7 +135,6 @@ BEGIN{
     our %dbline = ();     # actions in current file (keyed by line number)
 
     $_debugger_inited = 0;
-    $_deparser = B::Deparse->new();
 
     $^P |= FLAG_REPORT_GOTO;
 
@@ -154,10 +153,10 @@ BEGIN{
 
 sub _init_debugger()
 {
-    _pass_throgh_code {
-            #
-            print STDERR "Debugger inited \n";
+    _passthrough_code {
+            $_deparser = B::Deparse->new();
             $_debugger_inited = 1;
+            print STDERR "Debugger inited \n";
         };
 }
 
@@ -168,7 +167,7 @@ sub _init_debugger()
 my $_db_passthrough = 0;
 sub DB
 {
-    return if $_db_passthrough;
+    return if _pass_through();
     $_db_passthrough = 1;
     my @saved = ($@, $!, $,, $/, $\, $^W);
 
@@ -192,7 +191,7 @@ sub DB
 my $_sub_passthrough = 0;
 sub sub
 {
-    if (!$_sub_passthrough)
+    if (!_pass_through())
     {
         my @saved = ($@, $!, $,, $/, $\, $^W);
         $_sub_passthrough = 1;
@@ -243,7 +242,7 @@ sub sub
 my $_lsub_passthrough = 0;
 sub lsub: lvalue
 {
-    if (!$_lsub_passthrough)
+    if (!_pass_through())
     {
         my @saved = ($@, $!, $,, $/, $\, $^W);
         $_lsub_passthrough = 1;
@@ -276,13 +275,17 @@ sub lsub: lvalue
 #
 # After each subroutine subname is compiled, the existence of $DB::postponed{subname} is checked. If this key exists,
 # DB::postponed(subname) is called if the DB::postponed subroutine also exists.
+my $_postponed_passthrough = 0;
 sub postponed
 {
     my @saved = ($@, $!, $,, $/, $\, $^W);
+
+    my $old_postponed_passthrough = $_postponed_passthrough;
+    $_postponed_passthrough = 1;
+
     if ($_debugger_inited)
     {
         my ($package, $file, $line) = caller;
-
         _report "* DB::postponed called%s from %s:: %s line %s %s-%s-%s",
                 scalar @_ ? ' with '.(join ',', @_) : '',
             $package // 'undef',
@@ -297,6 +300,8 @@ sub postponed
     {
         _init_debugger();
     }
+    $_postponed_passthrough = $old_postponed_passthrough;
+
     ($@, $!, $,, $/, $\, $^W) = @saved;
 }
 # When execution of the program uses goto to enter a non-XS subroutine and the 0x80 bit is set in $^P , a call to
@@ -304,7 +309,7 @@ sub postponed
 my $_goto_passthrough = 0;
 sub goto
 {
-    return if $_goto_passthrough;
+    return if _pass_through();
 
     my @saved = ($@, $!, $,, $/, $\, $^W);
     $_goto_passthrough = 1;
@@ -324,22 +329,26 @@ sub goto
     ($@, $!, $,, $/, $\, $^W) = @saved;
 }
 
+sub _pass_through()
+{
+    return $_db_passthrough || $_sub_passthrough || $_lsub_passthrough || $_goto_passthrough || $_postponed_passthrough;
+}
+
 sub _get_deparsed_target()
 {
-    return _pass_throgh_code {
+    return _passthrough_code {
             eval {$_deparser->coderef2text( $DB::sub )};
         };
 }
 
-sub _pass_throgh_code(&;@)
+sub _passthrough_code(&;@)
 {
     my $coderef = shift;
-    my @save = ($_db_passthrough, $_goto_passthrough, $_sub_passthrough, $_lsub_passthrough);
-    ($_db_passthrough, $_goto_passthrough, $_sub_passthrough, $_lsub_passthrough) = (1, 1, 1, 1);
+    my $old_db_passthrgouth = $_db_passthrough;
+    $_db_passthrough = 1;
     my $res = $coderef->( @_ );
-    ($_db_passthrough, $_goto_passthrough, $_sub_passthrough, $_lsub_passthrough) = @save;
+    $_db_passthrough = $old_db_passthrgouth;
     return $res;
 }
-
 
 1; # End of Devel::Camelcadedb
