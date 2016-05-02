@@ -2,9 +2,16 @@ package DB;
 use 5.008;
 use strict;
 use warnings;
-use Data::Dumper;
+
+sub _pass_throgh_code(&;@);
+
+my $_debugger_inited;
+my $_deparser;
 
 BEGIN{
+    use Data::Dumper;
+    use B::Deparse;
+
     use constant {
         FLAG_SUB_ENTER_EXIT         => 0x01,
         FLAG_LINE_BY_LINE           => 0x02,
@@ -127,6 +134,9 @@ BEGIN{
     #
     our %dbline = ();     # actions in current file (keyed by line number)
 
+    $_debugger_inited = 0;
+    $_deparser = B::Deparse->new();
+
     $^P |= FLAG_REPORT_GOTO;
 
     sub _report($;@)
@@ -135,34 +145,77 @@ BEGIN{
         printf STDERR "$message\n", @sprintf_args;
     }
 
-    _report "* Debugger settings:";
-    for (my $i = 0; $i < @{FLAGS_DESCRIPTIVE_NAMES()}; $i++)
-    {
-        _report " * ".FLAGS_DESCRIPTIVE_NAMES->[$i] if ($^P & (1 << $i));
-    }
+    #    _report "* Debugger settings:";
+    #    for (my $i = 0; $i < @{FLAGS_DESCRIPTIVE_NAMES()}; $i++)
+    #    {
+    #        _report " * ".FLAGS_DESCRIPTIVE_NAMES->[$i] if ($^P & (1 << $i));
+    #    }
 }
+
+sub _init_debugger()
+{
+    _pass_throgh_code {
+            #
+            print STDERR "Debugger inited \n";
+            $_debugger_inited = 1;
+        };
+}
+
 
 # When the execution of your program reaches a point that can hold a breakpoint, the DB::DB() subroutine is called if
 # any of the variables $DB::trace , $DB::single , or $DB::signal is true. These variables are not localizable. This
 # feature is disabled when executing inside DB::DB() , including functions called from it unless $^D & (1<<30) is true.
+my $_db_passthrough = 0;
 sub DB
 {
+    return if $_db_passthrough;
+    $_db_passthrough = 1;
     my @saved = ($@, $!, $,, $/, $\, $^W);
-    _report "* DB::DB called from %s with %s, %s-%s-%s", (join ',', caller) // 'unknown', (join ',', @_) // '',
-        $DB::trace // 'undef', $DB::signal // 'undef', $DB::single // 'undef';
+
+    my ($package, $file, $line) = caller;
+    _report "* DB::DB called from %s:: %s line %s with %s, %s-%s-%s",
+        $package // 'undef',
+        $file // 'undef',
+        $line // 'undef',
+        (join ',', @_) // '',
+        $DB::trace // 'undef',
+        $DB::signal // 'undef',
+        $DB::single // 'undef',
+    ;
+
+    $_db_passthrough = 0;
     ($@, $!, $,, $/, $\, $^W) = @saved;
     return;
 }
 
+
+my $_sub_passthrough = 0;
 sub sub
 {
-    my @saved = ($@, $!, $,, $/, $\, $^W);
-
-    if (!substr( $DB::sub, -5 ) eq '::(""') # hack for version quotation
+    if (!$_sub_passthrough)
     {
-        _report "* DB::sub called %s with %s from %s", $DB::sub, (join ',', @_) // '', join ', ', caller;
+        my @saved = ($@, $!, $,, $/, $\, $^W);
+        $_sub_passthrough = 1;
+
+        my ($package, $file, $line) = caller;
+        _report "* DB::sub called %s%s from %s:: %s line %s %s-%s-%s",
+            $DB::sub,
+                scalar @_ ? ' with '.(join ',', @_) : '',
+            $package // 'undef',
+            $file // 'undef',
+            $line // 'undef',
+            $DB::trace // 'undef',
+            $DB::signal // 'undef',
+            $DB::single // 'undef',
+        ;
+        #        if( ref $DB::sub )
+        #        {
+        #            print STDERR _get_deparsed_target(); # these are BEGIN blocks
+        #        }
+
+        $_sub_passthrough = 0;
+        ($@, $!, $,, $/, $\, $^W) = @saved;
     }
-    ($@, $!, $,, $/, $\, $^W) = @saved;
 
     if (wantarray)
     {
@@ -187,11 +240,33 @@ sub sub
 
 # If the call is to an lvalue subroutine, and &DB::lsub is defined &DB::lsub (args) is called instead, otherwise
 # falling back to &DB::sub (args).
+my $_lsub_passthrough = 0;
 sub lsub: lvalue
 {
-    my @saved = ($@, $!, $,, $/, $\, $^W);
-    _report "* DB::lsub %s called with %s from %s", $DB::sub, (join ',', @_) // '', join ', ', caller;
-    ($@, $!, $,, $/, $\, $^W) = @saved;
+    if (!$_lsub_passthrough)
+    {
+        my @saved = ($@, $!, $,, $/, $\, $^W);
+        $_lsub_passthrough = 1;
+
+        my ($package, $file, $line) = caller;
+        _report "* DB::lsub called %s%s from %s:: %s line %s %s-%s-%s",
+            $DB::sub,
+                scalar @_ ? ' with '.(join ',', @_) : '',
+            $package // 'undef',
+            $file // 'undef',
+            $line // 'undef',
+            $DB::trace // 'undef',
+            $DB::signal // 'undef',
+            $DB::single // 'undef',
+        ;
+        #        if( ref $DB::sub )
+        #        {
+        #            print STDERR _get_deparsed_target();    # these are BEGIN blocks
+        #        }
+
+        $_lsub_passthrough = 0;
+        ($@, $!, $,, $/, $\, $^W) = @saved;
+    }
     &$DB::sub;
 }
 
@@ -204,16 +279,67 @@ sub lsub: lvalue
 sub postponed
 {
     my @saved = ($@, $!, $,, $/, $\, $^W);
-    _report "* DB::postponed called with %s from %s", (join ',', @_) // '', join ', ', caller;
+    if ($_debugger_inited)
+    {
+        my ($package, $file, $line) = caller;
+
+        _report "* DB::postponed called%s from %s:: %s line %s %s-%s-%s",
+                scalar @_ ? ' with '.(join ',', @_) : '',
+            $package // 'undef',
+            $file // 'undef',
+            $line // 'undef',
+            $DB::trace // 'undef',
+            $DB::signal // 'undef',
+            $DB::single // 'undef',
+        ;
+    }
+    else
+    {
+        _init_debugger();
+    }
     ($@, $!, $,, $/, $\, $^W) = @saved;
 }
 # When execution of the program uses goto to enter a non-XS subroutine and the 0x80 bit is set in $^P , a call to
 # &DB::goto is made, with $DB::sub holding the name of the subroutine being entered.
+my $_goto_passthrough = 0;
 sub goto
 {
+    return if $_goto_passthrough;
+
     my @saved = ($@, $!, $,, $/, $\, $^W);
-    _report "* DB::goto called with %s from %s", (join ',', @_) // '', join ', ', caller;
+    $_goto_passthrough = 1;
+
+    my ($package, $file, $line) = caller;
+    _report "* DB::goto called%s from %s:: %s line %s %s-%s-%s",
+            scalar @_ ? ' with '.(join ',', @_) : '',
+        $package // 'undef',
+        $file // 'undef',
+        $line // 'undef',
+        $DB::trace // 'undef',
+        $DB::signal // 'undef',
+        $DB::single // 'undef',
+    ;
+
+    $_goto_passthrough = 0;
     ($@, $!, $,, $/, $\, $^W) = @saved;
 }
+
+sub _get_deparsed_target()
+{
+    return _pass_throgh_code {
+            eval {$_deparser->coderef2text( $DB::sub )};
+        };
+}
+
+sub _pass_throgh_code(&;@)
+{
+    my $coderef = shift;
+    my @save = ($_db_passthrough, $_goto_passthrough, $_sub_passthrough, $_lsub_passthrough);
+    ($_db_passthrough, $_goto_passthrough, $_sub_passthrough, $_lsub_passthrough) = (1, 1, 1, 1);
+    my $res = $coderef->( @_ );
+    ($_db_passthrough, $_goto_passthrough, $_sub_passthrough, $_lsub_passthrough) = @save;
+    return $res;
+}
+
 
 1; # End of Devel::Camelcadedb
