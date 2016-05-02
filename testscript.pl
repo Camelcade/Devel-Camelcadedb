@@ -16,4 +16,5 @@ sub mysub2
 }
 
 mysub();
+print "Hi there";
 

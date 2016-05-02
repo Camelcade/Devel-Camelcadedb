@@ -1,3 +1,7 @@
+# http://perldoc.perl.org/DB.html
+# http://perldoc.perl.org/perldebug.html
+# http://perldoc.perl.org/perldebtut.html
+# http://perldoc.perl.org/perldebguts.html
 package DB;
 use 5.008;
 use strict;
@@ -37,7 +41,7 @@ BEGIN{
         FLAG_STORE_SOURCES          => 0x400,
         FLAG_KEEP_SUBLESS_EVALS     => 0x800,
         FLAG_KEEP_UNCOMPILED_SOURCE => 0x1000,
-        FLAGS_DESCRIPTIVE_NAMES     => [
+        FLAGS_DESCRIPTIVE_NAMES => [
             q{Debug subroutine enter/exit.},
             q{Line-by-line debugging. Causes DB::DB() subroutine to be called for each statement executed. Also causes saving source code lines (like 0x400).}
             ,
@@ -53,6 +57,9 @@ BEGIN{
             q{When saving source, include evals that generate no subroutines.},
             q{When saving source, include source that did not compile.},
         ],
+        STEP_CONTINUE           => 0,
+        STEP_INTO               => 1,
+        STEP_OVER               => 2,
     };
 
     my $internals_keys = [ qw/
@@ -111,17 +118,25 @@ BEGIN{
 
     # When execution of the program reaches a subroutine call, a call to &DB::sub (args) is made instead, with $DB::sub
     # holding the name of the called subroutine. (This doesn't happen if the subroutine was compiled in the DB package.)
-    our $sub = '';        # name of current subroutine
+    our $sub = '';        # Name of current executing subroutine.
 
     # A hash %DB::sub is maintained, whose keys are subroutine names and whose values have the form
     # filename:startline-endline . filename has the form (eval 34) for subroutines defined inside evals.
+    #
+    # The keys of this hash are the names of all the known subroutines. Each value is an encoded string that has the
+    # sprintf(3) format ("%s:%d-%d", filename, fromline, toline) .
     our %sub = ();        # "filename:fromline-toline" for every known sub
 
-    # If you set $DB::single to 2, it's equivalent to having just typed the n command, whereas a value of 1 means the s
-    # command.
-    our $single = 0;      # single-step flag (set it to 1 to enable stops in BEGIN/use)
-    our $signal = 0;      # signal flag (will cause a stop at the next line)
+    # If you set $DB::single to 2, it's equivalent to having just typed the step over command, whereas a value of 1
+    # means the step into command.
+    our $single = 0;      # single-step flag (set it to 1 to enable stops in BEGIN/use) 1 -into, 2 - over
+
+    # Signal flag. Will be set to a true value if a signal was caught. Clients may check for this flag to abort
+    # time-consuming operations.
+    our $signal = 0;
+
     # The $DB::trace variable should be set to 1 to simulate having typed the t command.
+    # This flag is set to true if the API is tracing through subroutine calls.
     our $trace = 0;       # are we tracing through subroutine calls?
 
     # For example, whenever you call Perl's built-in caller function from the package DB , the arguments that the
@@ -143,6 +158,8 @@ BEGIN{
     # As previously noted, individual entries (as opposed to the whole hash) are settable. Perl only cares about Boolean
     # true here, although the values used by perl5db.pl have the form "$break_condition\0$action" .
     #
+    # Actions in current file (keys are line numbers). The values are strings that have the sprintf(3) format
+    # ("%s\000%s", breakcondition, actioncode) .
     our %dbline = ();     # actions in current file (keyed by line number)
 
     $_debugger_inited = 0;
@@ -203,19 +220,50 @@ my $_db_passthrough = 0;
 sub DB
 {
     return if _pass_through();
+
     $_db_passthrough = 1;
     my @saved = ($@, $!, $,, $/, $\, $^W);
 
-    my ($package, $file, $line) = caller;
+    my ($package, $filename, $line_number) = caller;
     _report "* DB::DB called from %s:: %s line %s with %s, %s-%s-%s",
         $package // 'undef',
-        $file // 'undef',
-        $line // 'undef',
+        $filename // 'undef',
+        $line_number // 'undef',
         (join ',', @_) // '',
         $DB::trace // 'undef',
         $DB::signal // 'undef',
         $DB::single // 'undef',
     ;
+
+    my $srcline;
+    {
+        no strict 'refs';
+        $srcline = ${"::_<$filename"}[$line_number];
+    }
+    print STDERR $srcline;
+
+    my $command = <$_debug_socket>;
+    die 'Debugging socket disconnected' if !defined $command;
+    $command =~ s/[\r\n]+$//;
+    print STDERR "Got command: '$command'\n";
+
+    if ($command eq 'Q')
+    {
+        print STDERR "Exiting";
+        exit;
+    }
+    elsif ($command eq 'GO')
+    {
+        $DB::single = STEP_CONTINUE;
+    }
+    elsif ($command eq 'OV') # over
+    {
+        $DB::single = STEP_OVER;
+    }
+    else
+    {
+        $DB::single = STEP_INTO;
+    }
 
     $_db_passthrough = 0;
     ($@, $!, $,, $/, $\, $^W) = @saved;
@@ -226,6 +274,8 @@ sub DB
 my $_sub_passthrough = 0;
 sub sub
 {
+    my $old_db_single = $DB::single;
+
     if (!_pass_through())
     {
         my @saved = ($@, $!, $,, $/, $\, $^W);
@@ -242,10 +292,16 @@ sub sub
             $DB::signal // 'undef',
             $DB::single // 'undef',
         ;
+
         #        if( ref $DB::sub )
         #        {
         #            print STDERR _get_deparsed_target(); # these are BEGIN blocks
         #        }
+        if ($DB::single == STEP_OVER)
+        {
+            print STDERR "Disabling step in 1\n";
+            $DB::single = STEP_CONTINUE;
+        }
 
         $_sub_passthrough = 0;
         ($@, $!, $,, $/, $\, $^W) = @saved;
@@ -255,12 +311,26 @@ sub sub
     {
         no strict 'refs';
         @DB::ret = &$DB::sub;
+
+        if ($old_db_single != $DB::single)
+        {
+            print STDERR "Enabling setp in $DB::single => $old_db_single\n";
+            $DB::single = $old_db_single;
+        }
+
         return @DB::ret;
     }
     elsif (defined wantarray)
     {
         no strict 'refs';
         $DB::ret = &$DB::sub;
+
+        if ($old_db_single != $DB::single)
+        {
+            print STDERR "Enabling setp in $DB::single => $old_db_single\n";
+            $DB::single = $old_db_single;
+        }
+
         return $DB::ret;
     }
     else
@@ -268,6 +338,13 @@ sub sub
         no strict 'refs';
         &$DB::sub;
         $DB::ret = undef;
+
+        if ($old_db_single != $DB::single)
+        {
+            print STDERR "Enabling setp in $DB::single => $old_db_single\n";
+            $DB::single = $old_db_single;
+        }
+
         return;
     }
 }
@@ -283,16 +360,17 @@ sub lsub: lvalue
         $_lsub_passthrough = 1;
 
         my ($package, $file, $line) = caller;
-        _report "* DB::lsub called %s%s from %s:: %s line %s %s-%s-%s",
-            $DB::sub,
-                scalar @_ ? ' with '.(join ',', @_) : '',
-            $package // 'undef',
-            $file // 'undef',
-            $line // 'undef',
-            $DB::trace // 'undef',
-            $DB::signal // 'undef',
-            $DB::single // 'undef',
-        ;
+        #        _report "* DB::lsub called %s%s from %s:: %s line %s %s-%s-%s",
+        #            $DB::sub,
+        #                scalar @_ ? ' with '.(join ',', @_) : '',
+        #            $package // 'undef',
+        #            $file // 'undef',
+        #            $line // 'undef',
+        #            $DB::trace // 'undef',
+        #            $DB::signal // 'undef',
+        #            $DB::single // 'undef',
+        #        ;
+
         #        if( ref $DB::sub )
         #        {
         #            print STDERR _get_deparsed_target();    # these are BEGIN blocks
@@ -321,15 +399,15 @@ sub postponed
     if ($_debugger_inited)
     {
         my ($package, $file, $line) = caller;
-        _report "* DB::postponed called%s from %s:: %s line %s %s-%s-%s",
-                scalar @_ ? ' with '.(join ',', @_) : '',
-            $package // 'undef',
-            $file // 'undef',
-            $line // 'undef',
-            $DB::trace // 'undef',
-            $DB::signal // 'undef',
-            $DB::single // 'undef',
-        ;
+        #        _report "* DB::postponed called%s from %s:: %s line %s %s-%s-%s",
+        #                scalar @_ ? ' with '.(join ',', @_) : '',
+        #            $package // 'undef',
+        #            $file // 'undef',
+        #            $line // 'undef',
+        #            $DB::trace // 'undef',
+        #            $DB::signal // 'undef',
+        #            $DB::single // 'undef',
+        #        ;
     }
     else
     {
@@ -347,20 +425,22 @@ sub goto
     return if _pass_through();
 
     my @saved = ($@, $!, $,, $/, $\, $^W);
-    $_goto_passthrough = 1;
-
     my ($package, $file, $line) = caller;
-    _report "* DB::goto called%s from %s:: %s line %s %s-%s-%s",
-            scalar @_ ? ' with '.(join ',', @_) : '',
-        $package // 'undef',
-        $file // 'undef',
-        $line // 'undef',
-        $DB::trace // 'undef',
-        $DB::signal // 'undef',
-        $DB::single // 'undef',
-    ;
 
-    $_goto_passthrough = 0;
+    if (!$package || $package ne 'DB')
+    {
+        $_goto_passthrough = 1;
+        _report "* DB::goto called%s from %s:: %s line %s %s-%s-%s",
+                scalar @_ ? ' with '.(join ',', @_) : '',
+            $package // 'undef',
+            $file // 'undef',
+            $line // 'undef',
+            $DB::trace // 'undef',
+            $DB::signal // 'undef',
+            $DB::single // 'undef',
+        ;
+        $_goto_passthrough = 0;
+    }
     ($@, $!, $,, $/, $\, $^W) = @saved;
 }
 
