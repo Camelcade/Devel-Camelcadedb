@@ -12,6 +12,7 @@ sub mysub
 
 sub mysub2
 {
+    my $ua = LWP::UserAgent->new();
     print 69 ."\n";
 }
 

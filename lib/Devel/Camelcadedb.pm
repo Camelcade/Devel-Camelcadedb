@@ -54,6 +54,9 @@ my $_debug_net_role;        # server or client, we'll use ENV for this
 my $_debug_socket;
 my $_debug_packed_address;
 
+my $_stack_frames = [ ];     # stack frames
+my $_current_stack_frame;
+
 my $_debugger_inited;
 my $_deparser;
 
@@ -61,6 +64,46 @@ sub _report($;@)
 {
     my ($message, @sprintf_args) = @_;
     printf STDERR "$message\n", @sprintf_args;
+}
+
+sub _event_handler
+{
+    while()
+    {
+        my $command = <$_debug_socket>;
+        die 'Debugging socket disconnected' if !defined $command;
+        $command =~ s/[\r\n]+$//;
+        print STDERR "Got command: '$command'\n";
+
+        if ($command eq 'q')
+        {
+            print STDERR "Exiting";
+            exit;
+        }
+        elsif ($command eq 'g')
+        {
+            $DB::single = STEP_CONTINUE;
+            return;
+        }
+        elsif ($command eq 'o') # over
+        {
+            $DB::single = STEP_OVER;
+            return;
+        }
+        elsif ($command eq 't') # stack trace
+        {
+            _report( "* Stack trace" );
+            foreach my $frame (@$_stack_frames)
+            {
+                _report( "  * %s(%s)", $frame->{subname}, join ', ', @{$frame->{args}} );
+            }
+        }
+        else
+        {
+            $DB::single = STEP_INTO;
+            return;
+        }
+    }
 }
 
 # When the execution of your program reaches a point that can hold a breakpoint, the DB::DB() subroutine is called if
@@ -73,6 +116,7 @@ sub step_handler
     my @saved = ($@, $!, $,, $/, $\, $^W);
 
     my ($package, $filename, $line_number) = caller;
+
     _report "* DB::DB called from %s:: %s line %s with %s, %s-%s-%s",
         $package // 'undef',
         $filename // 'undef',
@@ -90,28 +134,7 @@ sub step_handler
     }
     print STDERR $srcline;
 
-    my $command = <$_debug_socket>;
-    die 'Debugging socket disconnected' if !defined $command;
-    $command =~ s/[\r\n]+$//;
-    print STDERR "Got command: '$command'\n";
-
-    if ($command eq 'Q')
-    {
-        print STDERR "Exiting";
-        exit;
-    }
-    elsif ($command eq 'GO')
-    {
-        $DB::single = STEP_CONTINUE;
-    }
-    elsif ($command eq 'OV') # over
-    {
-        $DB::single = STEP_OVER;
-    }
-    else
-    {
-        $DB::single = STEP_INTO;
-    }
+    _event_handler();
 
     ($@, $!, $,, $/, $\, $^W) = @saved;
     return;
@@ -126,12 +149,18 @@ sub sub_handler
     my $old_db_single = $DB::single;
     $DB::single = STEP_CONTINUE;
     my @saved = ($@, $!, $,, $/, $\, $^W);
+    my ($package, $file, $line) = caller;
+
+    $_current_stack_frame = {
+        subname => $DB::sub,
+        args    => [ @_ ],
+    };
+    push @$_stack_frames, $_current_stack_frame;
 
     if (!$_sub_passthrough)
     {
         $_sub_passthrough = 1;
 
-        my ($package, $file, $line) = caller;
         _report "* DB::sub called %s%s from %s:: %s line %s %s-%s-%s",
             $DB::sub,
                 scalar @_ ? ' with '.(join ',', @_) : '',
@@ -172,6 +201,7 @@ sub sub_handler
             print STDERR "Enabling step in $DB::single => $old_db_single\n";
             $DB::single = $old_db_single;
         }
+        pop @$_stack_frames;
 
         return @DB::ret;
     }
@@ -185,6 +215,7 @@ sub sub_handler
             print STDERR "Enabling step in $DB::single => $old_db_single\n";
             $DB::single = $old_db_single;
         }
+        pop @$_stack_frames;
 
         return $DB::ret;
     }
@@ -199,6 +230,7 @@ sub sub_handler
             print STDERR "Enabling step in $DB::single => $old_db_single\n";
             $DB::single = $old_db_single;
         }
+        pop @$_stack_frames;
 
         return;
     }
@@ -213,6 +245,13 @@ sub lsub_handler: lvalue
 
     my @saved = ($@, $!, $,, $/, $\, $^W);
     my ($package, $file, $line) = caller;
+
+    $_current_stack_frame = {
+        subname => $DB::sub,
+        args    => [ @_ ],
+    };
+    push @$_stack_frames, $_current_stack_frame;
+
     _report "* DB::lsub called %s%s from %s:: %s line %s %s-%s-%s",
         $DB::sub,
             scalar @_ ? ' with '.(join ',', @_) : '',
@@ -238,6 +277,7 @@ sub lsub_handler: lvalue
     {
         no strict 'refs';
         $DB::ret = &$DB::sub;
+        pop @$_stack_frames;
 
         if ($old_db_single != $DB::single)
         {
@@ -261,7 +301,7 @@ sub load_handler
     $DB::single = STEP_CONTINUE;
     my @saved = ($@, $!, $,, $/, $\, $^W);
 
-        my ($package, $file, $line) = caller;
+    my ($package, $file, $line) = caller;
     _report "* DB::postponed called%s from %s:: %s line %s %s-%s-%s",
             scalar @_ ? ' with '.(join ',', @_) : '',
         $package // 'undef',
@@ -397,6 +437,13 @@ else
         sockaddr_in( $_debug_server_port, 'tcp', inet_aton( $_debug_server_host ) )
     ) || die "connect:  $!";
 }
+
+my ($package, $filename, $line_number) = caller;
+$_current_stack_frame = {
+    subname => $filename,
+    args    => [ @ARGV ],
+};
+push @$_stack_frames, $_current_stack_frame;
 
 *DB::DB = \&step_handler;
 *DB::sub = \&sub_handler;
