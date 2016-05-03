@@ -16,6 +16,8 @@ my %hash = (
     regex   => qr/somethingelse/,
 );
 
+use Testmod;
+use Submod::Testmod;
 
 sub mysub
 {
