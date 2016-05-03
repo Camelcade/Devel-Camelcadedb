@@ -37,7 +37,7 @@ use constant {
         q{Report goto &subroutine as well.},
         q{Provide informative "file" names for evals based on the place they were compiled.},
         q{Provide informative names to anonymous subroutines based on the place they were compiled.},
-        q{Save source code lines into @{"_<$filename"}.},
+        q{Save source code lines into @{"::_<$filename"}.},
         q{When saving source, include evals that generate no subroutines.},
         q{When saving source, include source that did not compile.},
     ],
@@ -120,6 +120,8 @@ sub _render_variables
 
 sub _event_handler
 {
+    my ($package, $filename, $line_number) = @_;
+
     while()
     {
         my $command = <$_debug_socket>;
@@ -140,6 +142,11 @@ sub _event_handler
             }
             $DB::single = STEP_CONTINUE;
             return;
+        }
+        elsif ($command eq 'b') # show breakpoints
+        {
+            no strict 'refs';
+            print Dumper( \%{"::_<$filename"} );
         }
         elsif ($command eq 'v') # show variables
         {
@@ -197,7 +204,7 @@ sub _event_handler
                 #
                 #                _report( 'Variables: %s', Dumper(peek_sub($coderef)));
 
-                _report( '    * Lexical variables:\n%s', _render_variables( $frame->{_lexical_vars} ) );
+                _report( "    * Lexical variables:\n%s", _render_variables( $frame->{_lexical_vars} ) );
             }
         }
         else
@@ -223,7 +230,12 @@ sub step_handler
     $DB::single = STEP_CONTINUE;
     my @saved = ($@, $!, $,, $/, $\, $^W);
 
-    my ($package, $filename, $line_number) = caller;
+    my @caller = caller;
+    my ($package, $filename, $line_number) = @caller;
+    {
+        no strict 'refs';
+        *DB::dbline = *{"::_<$filename"};
+    }
 
     _report "* Step at %s:: %s line %s with %s, %s-%s-%s, depth %s",
         $package // 'undef',
@@ -236,14 +248,9 @@ sub step_handler
         scalar @$_stack_frames,
     ;
 
-    my $srcline;
-    {
-        no strict 'refs';
-        $srcline = ${"::_<$filename"}[$line_number];
-    }
-    print STDERR $srcline;
+    print STDERR $DB::dbline[$line_number];
 
-    _event_handler();
+    _event_handler( @caller );
 
     ($@, $!, $,, $/, $\, $^W) = @saved;
     return;
@@ -261,13 +268,19 @@ sub _enter_frame
     my ($args_ref, $caller_ref) = @_;
     my ($package, $filename, $line_number) = @{$caller_ref};
 
+    {
+        no strict 'refs';
+        *DB::dbline = *{"::_<$filename"};
+    }
+
     my $_current_stack_frame = {
         subname       => $DB::sub,
         args          => $args_ref,
         from_file     => $filename,
         from_line     => $line_number,
         _single       => $DB::single,
-        _lexical_vars => peek_my( 1 )
+        _lexical_vars => peek_my( 1 ),
+        _dbline       => *DB::dbline
     };
     unshift @$_stack_frames, $_current_stack_frame;
     $DB::single = STEP_CONTINUE;
@@ -308,6 +321,7 @@ sub _exit_frame
     _report " * Leaving frame, from: %s", scalar @$_stack_frames;
     my $frame = shift @$_stack_frames;
     $DB::single = $frame->{_single};
+    *DB::dbline = $frame->{_dbline};
     ($@, $!, $,, $/, $\, $^W) = @saved;
 }
 
@@ -354,7 +368,7 @@ sub lsub_handler: lvalue
     }
 }
 
-# After each required file is compiled, but before it is executed, DB::postponed(*{"_<$filename"}) is called if the
+# After each required file is compiled, but before it is executed, DB::postponed(*{"::_<$filename"}) is called if the
 # subroutine DB::postponed exists. Here, the $filename is the expanded name of the required file, as found in the values
 # of %INC.
 #
@@ -366,12 +380,17 @@ sub load_handler
     $DB::single = STEP_CONTINUE;
     my @saved = ($@, $!, $,, $/, $\, $^W);
 
-    my ($package, $file, $line) = caller;
+    my ($package, $file_name, $line_number) = caller;
+    {
+        no strict 'refs';
+        *DB::dbline = *{"::_<$file_name"};
+    }
+
     _report "* DB::postponed called%s from %s:: %s line %s %s-%s-%s",
             scalar @_ ? ' with '.(join ',', @_) : '',
         $package // 'undef',
-        $file // 'undef',
-        $line // 'undef',
+        $file_name // 'undef',
+        $line_number // 'undef',
         $DB::trace // 'undef',
         $DB::signal // 'undef',
         $old_db_single // 'undef',
@@ -388,15 +407,19 @@ sub goto_handler
     $DB::single = STEP_CONTINUE;
 
     my @saved = ($@, $!, $,, $/, $\, $^W);
-    my ($package, $file, $line) = caller;
+    my ($package, $filename, $line_number) = caller;
+    {
+        no strict 'refs';
+        *DB::dbline = *{"::_<$filename"};
+    }
 
     if (!$package || $package ne 'DB')
     {
         _report "* DB::goto called%s from %s:: %s line %s %s-%s-%s",
                 scalar @_ ? ' with '.(join ',', @_) : '',
             $package // 'undef',
-            $file // 'undef',
-            $line // 'undef',
+            $filename // 'undef',
+            $line_number // 'undef',
             $DB::trace // 'undef',
             $DB::signal // 'undef',
             $old_db_single // 'undef',
@@ -406,21 +429,38 @@ sub goto_handler
     $DB::single = $old_db_single;
 }
 
-# Each array @{"_<$filename"} holds the lines of $filename for a file compiled by Perl. The same is also true for evaled
+
+# Each array @{"::_<$filename"} holds the lines of $filename for a file compiled by Perl. The same is also true for evaled
 # strings that contain subroutines, or which are currently being executed. The $filename for evaled strings looks like
 # (eval 34) .
 # Values in this array are magical in numeric context: they compare equal to zero only if the line is not breakable.
 #
-# Each hash %{"_<$filename"} contains breakpoints and actions keyed by line number. Individual entries (as opposed to
+# # @DB::dbline is an alias for @{"::_<current_file"} , which holds the lines of the currently-selected file (compiled by
+# Perl), either explicitly chosen with the debugger's f command, or implicitly by flow of execution.
+#
+our @dbline = ();     # list of lines in currently loaded file
+
+# Each hash %{"::_<$filename"} contains breakpoints and actions keyed by line number. Individual entries (as opposed to
 # the whole hash) are settable. Perl only cares about Boolean true here, although the values used by perl5db.pl have the
 # form "$break_condition\0$action" .
 #
 # The same holds for evaluated strings that contain subroutines, or which are currently being executed. The $filename
 # for evaled strings looks like (eval 34) .
 #
-# Each scalar ${"_<$filename"} contains "_<$filename" . This is also the case for evaluated strings that contain
+# %DB::dbline is an alias for %{"::_<current_file"} , which contains breakpoints and actions keyed by line number in
+# the currently-selected file, either explicitly chosen with the debugger's f command, or implicitly by flow of execution.
+# As previously noted, individual entries (as opposed to the whole hash) are settable. Perl only cares about Boolean
+# true here, although the values used by perl5db.pl have the form "$break_condition\0$action" .
+#
+# Actions in current file (keys are line numbers). The values are strings that have the sprintf(3) format
+# ("%s\000%s", breakcondition, actioncode) .
+our %dbline = ();     # actions in current file (keyed by line number)
+
+# Each scalar ${"::_<$filename"} contains "::_<$filename" . This is also the case for evaluated strings that contain
 # subroutines, or which are currently being executed. The $filename for evaled strings looks like (eval 34) .
 #
+our $dbline;;
+
 # DB::dump_trace(skip[,count]) skips the specified number of frames and returns a list containing information about the
 # calling frames (all of them, if count is missing). Each entry is reference to a hash with keys context (either ., $ ,
 # or @ ), sub (subroutine name, or info about eval), args (undef or a reference to an array), file , and line .
@@ -459,20 +499,6 @@ our @args = ();       # arguments of current subroutine or @ARGV array
 our @ret = ();        # return value of last sub executed in list context
 our $ret = '';        # return value of last sub executed in scalar context
 
-#
-# # @DB::dbline is an alias for @{"::_<current_file"} , which holds the lines of the currently-selected file (compiled by
-# Perl), either explicitly chosen with the debugger's f command, or implicitly by flow of execution.
-#
-our @dbline = ();     # list of lines in currently loaded file
-
-# %DB::dbline is an alias for %{"::_<current_file"} , which contains breakpoints and actions keyed by line number in
-# the currently-selected file, either explicitly chosen with the debugger's f command, or implicitly by flow of execution.
-# As previously noted, individual entries (as opposed to the whole hash) are settable. Perl only cares about Boolean
-# true here, although the values used by perl5db.pl have the form "$break_condition\0$action" .
-#
-# Actions in current file (keys are line numbers). The values are strings that have the sprintf(3) format
-# ("%s\000%s", breakcondition, actioncode) .
-our %dbline = ();     # actions in current file (keyed by line number)
 
 $_local_debug_host = 'localhost';
 $_local_debug_port = 12345;
@@ -504,12 +530,20 @@ else
 }
 
 my ($package, $filename, $line_number) = caller;
+{
+    no strict 'refs';
+    *DB::dbline = *{"::_<$filename"};
+    #    $dbline{37} = 1;
+    #    $dbline{38} = 1;
+}
 push @$_stack_frames, {
-        subname   => $filename,
-        args      => [ @ARGV ],
-        from_file => $filename,
-        from_line => $line_number,
-        _single   => STEP_INTO,
+        subname       => $filename,
+        args          => [ @ARGV ],
+        from_file     => $filename,
+        from_line     => $line_number,
+        _single       => STEP_INTO,
+        _dbline       => *DB::dbline,
+        _lexical_vars => { }
     };
 
 *DB::DB = \&step_handler;
