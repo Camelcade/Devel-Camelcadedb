@@ -134,6 +134,15 @@ sub _event_handler
             print STDERR "Exiting";
             exit;
         }
+        elsif ($command eq 'l') # list
+        {
+            for (my $i = 0; $i < @DB::dbline; $i++)
+            {
+                my $src = $DB::dbline[$i] // '';
+                chomp $src;
+                printf STDERR "%s: %s (%s)\n", $i, $src, $DB::dbline[$i] == 0 ? 'unbreakable' : 'breakable';
+            }
+        }
         elsif ($command eq 'g')
         {
             foreach my $frame (@{$_stack_frames})
@@ -146,7 +155,28 @@ sub _event_handler
         elsif ($command eq 'b') # show breakpoints
         {
             no strict 'refs';
-            print Dumper( \%{"::_<$filename"} );
+            print Dumper( \%DB::dbline );
+        }
+        elsif ($command =~ /^b (\d+)$/)
+        {
+            my $line = $1;
+            if ($DB::dbline[$line] == 0)
+            {
+                print STDERR "Line $line is unbreakable, try another one\n";
+            }
+            else
+            {
+                if ($DB::dbline{$line})
+                {
+                    $DB::dbline{$line} = 0;
+                    print STDERR "Removed breakpoint from line $line\n";
+                }
+                else
+                {
+                    $DB::dbline{$line} = 1;
+                    print STDERR "Added breakpoint to line $line\n";
+                }
+            }
         }
         elsif ($command eq 'v') # show variables
         {
@@ -533,8 +563,6 @@ my ($package, $filename, $line_number) = caller;
 {
     no strict 'refs';
     *DB::dbline = *{"::_<$filename"};
-    #    $dbline{37} = 1;
-    #    $dbline{38} = 1;
 }
 push @$_stack_frames, {
         subname       => $filename,
