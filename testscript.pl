@@ -19,12 +19,15 @@ sub mysub2
 mysub();
 
 eval {
-    print "Eval is here";
+    print "Eval is here\n";
 };
 
 eval q{
-    print "String eval is here";
+    print "String eval is here\n";
     };
 
-print "Hi there";
+print "Hi there\n";
 
+BEGIN{
+    print "THis is begin block!\n";
+}
