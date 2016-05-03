@@ -55,7 +55,6 @@ my $_debug_socket;
 my $_debug_packed_address;
 
 my $_stack_frames = [ ];     # stack frames
-my $_current_stack_frame;
 
 my $_debugger_inited;
 my $_deparser;
@@ -85,9 +84,14 @@ sub _event_handler
             $DB::single = STEP_CONTINUE;
             return;
         }
-        elsif ($command eq 'o') # over
+        elsif ($command eq 'o') # over, fixme need hack for CODE
         {
             $DB::single = STEP_OVER;
+            return;
+        }
+        elsif ($command eq 'u') # step out, fixme need hack for CODE
+        {
+            $DB::single = STEP_CONTINUE;
             return;
         }
         elsif ($command eq 't') # stack trace
@@ -95,7 +99,12 @@ sub _event_handler
             _report( "* Stack trace" );
             foreach my $frame (@$_stack_frames)
             {
-                _report( "  * %s(%s)", $frame->{subname}, join ', ', @{$frame->{args}} );
+                _report( "  * %s(%s) from %s, line %s",
+                    $frame->{subname},
+                    join( ', ', @{$frame->{args}} ),
+                    $frame->{from_file},
+                    $frame->{from_line}
+                );
             }
         }
         else
@@ -117,7 +126,7 @@ sub step_handler
 
     my ($package, $filename, $line_number) = caller;
 
-    _report "* DB::DB called from %s:: %s line %s with %s, %s-%s-%s",
+    _report "* Step at %s:: %s line %s with %s, %s-%s-%s, depth %s",
         $package // 'undef',
         $filename // 'undef',
         $line_number // 'undef',
@@ -125,6 +134,7 @@ sub step_handler
         $DB::trace // 'undef',
         $DB::signal // 'undef',
         $old_db_single // 'undef',
+        scalar @$_stack_frames,
     ;
 
     my $srcline;
@@ -140,83 +150,84 @@ sub step_handler
     return;
 }
 
-
-
-# this pass-through flag handles quotation overload loop
-my $_sub_passthrough = 0;
-sub sub_handler
+sub _get_current_frame
 {
-    my $old_db_single = $DB::single;
-    $DB::single = STEP_CONTINUE;
+    return $_stack_frames->[-1];
+}
+
+my $_frame_passthrough = 0;
+sub _enter_frame
+{
     my @saved = ($@, $!, $,, $/, $\, $^W);
-    my ($package, $file, $line) = caller;
+    my ($args_ref, $caller_ref) = @_;
+    my ($package, $filename, $line_number) = @{$caller_ref};
 
-    $_current_stack_frame = {
-        subname => $DB::sub,
-        args    => [ @_ ],
+    my $_current_stack_frame = {
+        subname   => $DB::sub,
+        args      => $args_ref,
+        from_file => $filename,
+        from_line => $line_number,
+        _single   => $DB::single,
     };
-    push @$_stack_frames, $_current_stack_frame;
+    unshift @$_stack_frames, $_current_stack_frame;
+    $DB::single = STEP_CONTINUE;
 
-    if (!$_sub_passthrough)
+    if (!$_frame_passthrough)
     {
-        $_sub_passthrough = 1;
-
-        _report "* DB::sub called %s%s from %s:: %s line %s %s-%s-%s",
+        $_frame_passthrough = 1;
+        _report "* Entering frame %s%s from %s:: %s line %s %s-%s-%s, depth: %s",
             $DB::sub,
                 scalar @_ ? ' with '.(join ',', @_) : '',
             $package // 'undef',
-            $file // 'undef',
-            $line // 'undef',
+            $filename // 'undef',
+            $line_number // 'undef',
             $DB::trace // 'undef',
             $DB::signal // 'undef',
-            $old_db_single // 'undef',
+            $_current_stack_frame->{_single} // 'undef',
+            scalar @$_stack_frames,
         ;
-        $_sub_passthrough = 0;
+        $_frame_passthrough = 0;
     }
 
-    #        if( ref $DB::sub )
-    #        {
-    #            print STDERR _get_deparsed_target(); # these are BEGIN blocks
-    #        }
-
-    if ($old_db_single == STEP_OVER)
+    if ($_current_stack_frame->{_single} == STEP_OVER)
     {
         print STDERR "Disabling step in in subs\n";
         $DB::single = STEP_CONTINUE;
     }
     else
     {
-        $DB::single = $old_db_single;
+        $DB::single = $_current_stack_frame->{_single};
     }
-
     ($@, $!, $,, $/, $\, $^W) = @saved;
+    return $_current_stack_frame;
+}
+
+sub _exit_frame
+{
+    my @saved = ($@, $!, $,, $/, $\, $^W);
+    _report " * Leaving frame, from: %s", scalar @$_stack_frames;
+    my $frame = shift @$_stack_frames;
+    $DB::single = $frame->{_single};
+    ($@, $!, $,, $/, $\, $^W) = @saved;
+}
+
+# this pass-through flag handles quotation overload loop
+sub sub_handler
+{
+    _enter_frame( [ @_ ], [ caller ] );
 
     if (wantarray)
     {
         no strict 'refs';
         @DB::ret = &$DB::sub;
-
-        if ($old_db_single != $DB::single)
-        {
-            print STDERR "Enabling step in $DB::single => $old_db_single\n";
-            $DB::single = $old_db_single;
-        }
-        pop @$_stack_frames;
-
+        _exit_frame();
         return @DB::ret;
     }
     elsif (defined wantarray)
     {
         no strict 'refs';
         $DB::ret = &$DB::sub;
-
-        if ($old_db_single != $DB::single)
-        {
-            print STDERR "Enabling step in $DB::single => $old_db_single\n";
-            $DB::single = $old_db_single;
-        }
-        pop @$_stack_frames;
-
+        _exit_frame();
         return $DB::ret;
     }
     else
@@ -224,14 +235,7 @@ sub sub_handler
         no strict 'refs';
         &$DB::sub;
         $DB::ret = undef;
-
-        if ($old_db_single != $DB::single)
-        {
-            print STDERR "Enabling step in $DB::single => $old_db_single\n";
-            $DB::single = $old_db_single;
-        }
-        pop @$_stack_frames;
-
+        _exit_frame();
         return;
     }
 }
@@ -240,51 +244,12 @@ sub sub_handler
 # falling back to &DB::sub (args).
 sub lsub_handler: lvalue
 {
-    my $old_db_single = $DB::single;
-    $DB::single = STEP_CONTINUE;
+    _enter_frame( [ @_ ], [ caller ] );
 
-    my @saved = ($@, $!, $,, $/, $\, $^W);
-    my ($package, $file, $line) = caller;
-
-    $_current_stack_frame = {
-        subname => $DB::sub,
-        args    => [ @_ ],
-    };
-    push @$_stack_frames, $_current_stack_frame;
-
-    _report "* DB::lsub called %s%s from %s:: %s line %s %s-%s-%s",
-        $DB::sub,
-            scalar @_ ? ' with '.(join ',', @_) : '',
-        $package // 'undef',
-        $file // 'undef',
-        $line // 'undef',
-        $DB::trace // 'undef',
-        $DB::signal // 'undef',
-        $old_db_single // 'undef',
-    ;
-
-    if ($old_db_single == STEP_OVER)
-    {
-        print STDERR "Disabling step in in lsub\n";
-        $DB::single = STEP_CONTINUE;
-    }
-    else
-    {
-        $DB::single = $old_db_single;
-    }
-
-    ($@, $!, $,, $/, $\, $^W) = @saved;
     {
         no strict 'refs';
         $DB::ret = &$DB::sub;
-        pop @$_stack_frames;
-
-        if ($old_db_single != $DB::single)
-        {
-            print STDERR "Enabling setp in in lsub $DB::single => $old_db_single\n";
-            $DB::single = $old_db_single;
-        }
-
+        _exit_frame();
         return $DB::ret;
     }
 }
@@ -439,11 +404,12 @@ else
 }
 
 my ($package, $filename, $line_number) = caller;
-$_current_stack_frame = {
-    subname => $filename,
-    args    => [ @ARGV ],
-};
-push @$_stack_frames, $_current_stack_frame;
+push @$_stack_frames, {
+        subname   => $filename,
+        args      => [ @ARGV ],
+        from_file => $filename,
+        from_line => $line_number,
+    };
 
 *DB::DB = \&step_handler;
 *DB::sub = \&sub_handler;
