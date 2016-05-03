@@ -16,5 +16,14 @@ sub mysub2
 }
 
 mysub();
+
+eval {
+    print "Eval is here";
+};
+
+eval q{
+    print "String eval is here";
+    };
+
 print "Hi there";
 
