@@ -7,6 +7,8 @@ use 5.008;
 use strict;
 use warnings;
 use Data::Dumper;
+use PadWalker qw/peek_sub peek_my/;
+use Scalar::Util qw/reftype/;
 use B::Deparse;
 use Socket;
 use constant {
@@ -65,6 +67,57 @@ sub _report($;@)
     printf STDERR "$message\n", @sprintf_args;
 }
 
+sub _render_variables
+{
+    my ($vars_hash) = @_;
+    my $result = '';
+
+    foreach my $variable (keys %$vars_hash)
+    {
+        my $value = $vars_hash->{$variable};
+
+        my $reftype = reftype $value;
+        my $ref = ref $value;
+        my $appendix = '';
+
+        if ($reftype eq 'SCALAR')
+        {
+            $value = $$value // '_UNDEF_';
+        }
+        elsif ($reftype eq 'ARRAY')
+        {
+            $appendix = sprintf '[%s]', scalar @$value;
+            my @elements = @$value;
+            if (@elements > 1000)
+            {
+                splice @elements, 3; # should be a 1000 here and method to get the rest
+                push @elements, '...'
+            }
+            $value = sprintf "(%s)", join ',', map { $_ // '__UNDEF__'} @elements;
+        }
+        elsif ($reftype eq 'HASH')
+        {
+            my @elements = sort keys %$value; # sorting is necessary to iterate and get data frame
+            $appendix = sprintf '{%s}', scalar @elements;
+
+            if (@elements > 1000)
+            {
+                splice @elements, 3; # should be a 1000 here and method to get the rest
+                push @elements, '...'
+            }
+            $value = sprintf "(\n%s\n)", join ",\n", map { "\t\t".$_." => ".$value->{$_}} @elements;
+        }
+        elsif (ref $value eq 'REF')
+        {
+            $value = $$value;
+        }
+
+        $result .= "\t$ref $variable$appendix = $value\n";
+    }
+
+    return $result;
+}
+
 sub _event_handler
 {
     while()
@@ -81,8 +134,16 @@ sub _event_handler
         }
         elsif ($command eq 'g')
         {
+            foreach my $frame (@{$_stack_frames})
+            {
+                $frame->{_single} = STEP_CONTINUE;
+            }
             $DB::single = STEP_CONTINUE;
             return;
+        }
+        elsif ($command eq 'v') # show variables
+        {
+            _report " * Lexical variables:\n%s", _render_variables( peek_my( 2 ) );
         }
         elsif ($command eq 'o') # over,
         {
@@ -116,6 +177,7 @@ sub _event_handler
         elsif ($command eq 't') # stack trace
         {
             _report( "* Stack trace" );
+
             foreach my $frame (@$_stack_frames)
             {
                 _report( "  * %s(%s) from %s, line %s",
@@ -124,6 +186,18 @@ sub _event_handler
                     $frame->{from_file},
                     $frame->{from_line}
                 );
+
+                #                my $coderef = $frame->{subname};
+                #
+                #                if( !ref $coderef)
+                #                {
+                #                    no strict 'refs';
+                #                    $coderef = \&{$frame->{subname}};
+                #                }
+                #
+                #                _report( 'Variables: %s', Dumper(peek_sub($coderef)));
+
+                _report( '    * Lexical variables:\n%s', _render_variables( $frame->{_lexical_vars} ) );
             }
         }
         else
@@ -139,6 +213,12 @@ sub _event_handler
 # feature is disabled when executing inside DB::DB() , including functions called from it unless $^D & (1<<30) is true.
 sub step_handler
 {
+    #    if( $DB::single == STEP_OVER ) fixme this might work with slight tuning
+    #    {
+    #        $DB::single = STEP_CONTINUE;
+    #        return;
+    #    }
+
     my $old_db_single = $DB::single;
     $DB::single = STEP_CONTINUE;
     my @saved = ($@, $!, $,, $/, $\, $^W);
@@ -182,11 +262,12 @@ sub _enter_frame
     my ($package, $filename, $line_number) = @{$caller_ref};
 
     my $_current_stack_frame = {
-        subname   => $DB::sub,
-        args      => $args_ref,
-        from_file => $filename,
-        from_line => $line_number,
-        _single   => $DB::single,
+        subname       => $DB::sub,
+        args          => $args_ref,
+        from_file     => $filename,
+        from_line     => $line_number,
+        _single       => $DB::single,
+        _lexical_vars => peek_my( 1 )
     };
     unshift @$_stack_frames, $_current_stack_frame;
     $DB::single = STEP_CONTINUE;

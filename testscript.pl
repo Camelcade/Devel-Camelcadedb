@@ -1,8 +1,21 @@
 #!/usr/bin/perl
 use strict;
 use warnings FATAL => 'all';
+use LWP::UserAgent;
 
-require LWP::UserAgent;
+my $scalar = 123;
+my @array = (1, 2, 3, 5, 6);
+my $ua = LWP::UserAgent->new();
+my $regexp = qr/something/;
+my %hash = (
+    test    => 69,
+    scref   => \$scalar,
+    aref    => \@array,
+    cref    => sub {print "blah!";},
+    browser => LWP::UserAgent->new(),
+    regex   => qr/somethingelse/,
+);
+
 
 sub mysub
 {
