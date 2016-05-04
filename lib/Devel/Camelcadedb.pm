@@ -128,13 +128,14 @@ my $_debug_net_role;        # server or client, we'll use ENV for this
 my $_debug_socket;
 my $_debug_packed_address;
 
+my @saved;  # saved runtime environment
+
 my $current_line;
 my $current_package;
 my $current_file;
 
 my $_stack_frames = [ ];     # stack frames
 
-my $_debugger_inited;
 my $_deparser;
 
 sub _report($;@)
@@ -220,6 +221,16 @@ sub _event_handler
         elsif ($command eq 's') # dump %sub
         {
             print STDERR Dumper( \%DB::sub );
+        }
+        elsif ($command =~ /^e\s+(.+)$/) # eval expresion
+        {
+            my @lsaved = ($@, $!, $,, $/, $\, $^W);
+            my $expr = "package $current_package;$1";
+            print STDERR "Running $expr\n";
+            ($@, $!, $,, $/, $\, $^W) = @saved;
+            my $result = eval $expr;
+            ($@, $!, $,, $/, $\, $^W) = @lsaved;
+            print STDERR "Result is $result\n";
         }
         elsif ($command eq 'f') # dump keys of %DB::dbline
         {
@@ -346,7 +357,7 @@ sub step_handler
 
     my $old_db_single = $DB::single;
     $DB::single = STEP_CONTINUE;
-    my @saved = ($@, $!, $,, $/, $\, $^W);
+    @saved = ($@, $!, $,, $/, $\, $^W);
 
     ($current_package, $current_file, $current_line) = caller;
     _set_dbline();
@@ -378,7 +389,7 @@ sub _get_current_frame
 my $_frame_passthrough = 0;
 sub _enter_frame
 {
-    my @saved = ($@, $!, $,, $/, $\, $^W);
+    @saved = ($@, $!, $,, $/, $\, $^W);
     my ($args_ref) = @_;
     _set_dbline();
 
@@ -426,7 +437,7 @@ sub _enter_frame
 
 sub _exit_frame
 {
-    my @saved = ($@, $!, $,, $/, $\, $^W);
+    @saved = ($@, $!, $,, $/, $\, $^W);
     _report " * Leaving frame, from: %s", scalar @$_stack_frames;
     my $frame = shift @$_stack_frames;
     $DB::single = $frame->{_single};
@@ -489,7 +500,7 @@ sub load_handler
 {
     my $old_db_single = $DB::single;
     $DB::single = STEP_CONTINUE;
-    my @saved = ($@, $!, $,, $/, $\, $^W);
+    @saved = ($@, $!, $,, $/, $\, $^W);
 
     ($current_package, $current_file, $current_line) = caller;
     _set_dbline();
@@ -537,7 +548,7 @@ sub goto_handler
     my $old_db_single = $DB::single;
     $DB::single = STEP_CONTINUE;
 
-    my @saved = ($@, $!, $,, $/, $\, $^W);
+    @saved = ($@, $!, $,, $/, $\, $^W);
     ($current_package, $current_file, $current_line) = caller;
     _set_dbline();
 

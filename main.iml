@@ -7,7 +7,7 @@
       <sourceFolder url="file://$MODULE_DIR$/lib" type="perl-library" />
       <sourceFolder url="file://$MODULE_DIR$/t" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/xt" isTestSource="true" />
-      <excludeFolder url="file://$MODULE_DIR$/original" />
+      <sourceFolder url="file://$MODULE_DIR$/original" isTestSource="false" />
     </content>
     <orderEntry type="module-library">
       <library>
@@ -18,7 +18,7 @@
         <SOURCES />
       </library>
     </orderEntry>
-    <orderEntry type="sourceFolder" forTests="false" />
     <orderEntry type="jdk" jdkName="Perl v5.22.0 (MSWin32-x64-multi-thread)" jdkType="Perl5 Interpreter" />
+    <orderEntry type="sourceFolder" forTests="false" />
   </component>
 </module>
