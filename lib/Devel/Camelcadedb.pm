@@ -11,7 +11,7 @@ use PadWalker qw/peek_sub peek_my/;
 use Scalar::Util qw/reftype/;
 use B::Deparse;
 use Cwd;
-use Socket;
+use IO::Socket::INET;
 use constant {
     FLAG_SUB_ENTER_EXIT         => 0x01,
     FLAG_LINE_BY_LINE           => 0x02,
@@ -195,8 +195,17 @@ sub _render_variables
     return $result;
 }
 
+sub _send_to_debugger
+{
+    my ($string) = @_;
+    $string .= "\n";
+    print $_debug_socket $string;
+    #    print STDERR "* Sent to debugger: $string";
+}
+
 sub _event_handler
 {
+    _send_to_debugger( "STOPPED" );
     while()
     {
         my $command = <$_debug_socket>;
@@ -580,23 +589,26 @@ $^P |= FLAG_REPORT_GOTO;
 if ($_debug_net_role eq 'server')
 {
     _report( "Listening for the debugger at %s:%s...", $_local_debug_host, $_local_debug_port );
-    my $_server_socket;
-    socket( $_server_socket, PF_INET, SOCK_STREAM, getprotobyname 'tcp' ) || die "socket $!";
-    setsockopt( $_server_socket, SOL_SOCKET, SO_REUSEADDR, pack( 'l', 1 ) ) || die "socketopt $!";
-    bind( $_server_socket,
-        sockaddr_in( $_local_debug_port, $_local_debug_host ? inet_aton( $_local_debug_host ) : INADDR_ANY )
-    ) || die "bind $!";
-    listen( $_server_socket, SOMAXCONN ) || die "listen $!";
+    my $_server_socket = IO::Socket::INET->new(
+        Listen    => 1,
+        LocalAddr => $_local_debug_host,
+        LocalPort => $_local_debug_port,
+        ReuseAddr => 1,
+        Proto     => 'tcp',
+    ) || die "Error binding to $_local_debug_host:$_local_debug_port";
     $_debug_packed_address = accept( $_debug_socket, $_server_socket );
 }
 else
 {
     _report( "Connecting to the debugger at %s:%s...", $_debug_server_host, $_debug_server_port );
-    socket( $_debug_socket, PF_INET, SOCK_STREAM, getprotobyname 'tcp' ) || die "socket: $!";
-    connect( $_debug_socket,
-        sockaddr_in( $_debug_server_port, 'tcp', inet_aton( $_debug_server_host ) )
-    ) || die "connect:  $!";
+    $_debug_socket = IO::Socket::INET->new(
+        PeerAddr  => $_debug_server_host,
+        LocalPort => $_debug_server_port,
+        ReuseAddr => 1,
+        Proto     => 'tcp',
+    ) || die "Error connecting to $_debug_server_host:$_debug_server_port";
 }
+$_debug_socket->autoflush( 1 );
 
 ($current_package, $current_file, $current_line) = caller;
 _set_dbline();
