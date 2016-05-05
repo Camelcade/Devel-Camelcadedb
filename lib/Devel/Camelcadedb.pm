@@ -231,6 +231,8 @@ sub _get_stop_command
             line => _get_adjusted_line_number( $stack_frame->{file}, $stack_frame->{current_line} ),
         };
 
+        # fixme handle Step at main:: (eval 25)[C:\Repository\IDEA-Perl5-Debugger\testscript.pl:40] line 2 with , 0-0-2, depth 1
+
         if (!defined $new_frame->{file})
         {
             _report( "Couldn't find real filename for %s, %s", Dumper( $stack_frame ), Dumper( \%_real_filenames ) );
@@ -395,6 +397,14 @@ sub _set_dbline
     *DB::dbline = *{"::_<$current_file"};
 }
 
+sub _update_frame_position
+{
+    my $current_stack_frame = _get_current_stack_frame();
+    $current_stack_frame->{current_line} = $current_line;
+    $current_stack_frame->{file} = $current_file;
+    $_real_filenames{$current_file} //= _get_real_path( $current_file, $current_file );
+}
+
 # When the execution of your program reaches a point that can hold a breakpoint, the DB::DB() subroutine is called if
 # any of the variables $DB::trace , $DB::single , or $DB::signal is true. These variables are not localizable. This
 # feature is disabled when executing inside DB::DB() , including functions called from it unless $^D & (1<<30) is true.
@@ -412,15 +422,7 @@ sub step_handler
 
     ($current_package, $current_file, $current_line) = caller;
     _set_dbline();
-
-    my $current_stack_frame = _get_current_stack_frame();
-    $current_stack_frame->{current_line} = $current_line;
-
-    if (!$current_stack_frame->{file})
-    {
-        $current_stack_frame->{file} = $current_file;
-        $_real_filenames{$current_file} = _get_real_path( $current_file, $current_file );
-    }
+    _update_frame_position();
 
     _report "* Step at %s:: %s line %s with %s, %s-%s-%s, depth %s",
         $current_package // 'undef',
@@ -452,6 +454,7 @@ sub _enter_frame
     @saved = ($@, $!, $,, $/, $\, $^W);
     my ($args_ref) = @_;
     _set_dbline();
+    _update_frame_position();
 
     my $sub_file = '';
     my $sub_line = 0;
@@ -605,6 +608,7 @@ sub load_handler
 
     ($current_package, $current_file, $current_line) = caller;
     _set_dbline();
+    _update_frame_position();
 
     my $new_filename = $_[0];
     if ($new_filename =~ /_<(.+)$/)
@@ -640,6 +644,7 @@ sub goto_handler
     @saved = ($@, $!, $,, $/, $\, $^W);
     ($current_package, $current_file, $current_line) = caller;
     _set_dbline();
+    _update_frame_position();
 
     if (!$current_package || $current_package ne 'DB')
     {
