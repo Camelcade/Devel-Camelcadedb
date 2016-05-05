@@ -10,6 +10,7 @@ use Data::Dumper;
 use PadWalker qw/peek_sub peek_my/;
 use Scalar::Util qw/reftype/;
 use B::Deparse;
+use JSON::XS;
 use Cwd;
 use IO::Socket::INET;
 use constant {
@@ -128,6 +129,8 @@ my $_debug_net_role;        # server or client, we'll use ENV for this
 my $_debug_socket;
 my $_debug_packed_address;
 
+my JSON::XS $coder = JSON::XS->new()->latin1();
+
 my @saved;  # saved runtime environment
 
 my $current_line;
@@ -203,9 +206,48 @@ sub _send_to_debugger
     #    print STDERR "* Sent to debugger: $string";
 }
 
+sub _get_adjusted_line_number
+{
+    my ($filename, $line_number) = @_;
+    $line_number--;
+    return $line_number;
+}
+
+sub _get_stop_command
+{
+    my $data = {
+        event  => 'STOP',
+        frames => [
+        ],
+    };
+
+    my $frames = $data->{frames};
+
+    foreach my $stack_frame (@{$_stack_frames})
+    {
+        my $new_frame = {
+            name => "$stack_frame->{subname}",
+            file => $_real_filenames{$stack_frame->{file}},
+            line => _get_adjusted_line_number( $stack_frame->{file}, $stack_frame->{current_line} ),
+        };
+
+        if (!defined $new_frame->{file})
+        {
+            _report( "Couldn't find real filename for %s, %s", Dumper( $stack_frame ), Dumper( \%_real_filenames ) );
+            $new_frame->{file} = $stack_frame->{file};
+        }
+
+        $new_frame->{file} =~ s{\\}{/};
+
+        push @$frames, $new_frame;
+    }
+
+    return $coder->encode( $data );
+}
+
 sub _event_handler
 {
-    _send_to_debugger( "STOPPED" );
+    _send_to_debugger( _get_stop_command() );
     while()
     {
         my $command = <$_debug_socket>;
@@ -322,7 +364,7 @@ sub _event_handler
                 _report( "  * %s(%s) from %s, line %s",
                     $frame->{subname},
                     join( ', ', @{$frame->{args}} ),
-                    $frame->{from_file},
+                    $frame->{file},
                     $frame->{from_line}
                 );
 
@@ -371,6 +413,15 @@ sub step_handler
     ($current_package, $current_file, $current_line) = caller;
     _set_dbline();
 
+    my $current_stack_frame = _get_current_stack_frame();
+    $current_stack_frame->{current_line} = $current_line;
+
+    if (!$current_stack_frame->{file})
+    {
+        $current_stack_frame->{file} = $current_file;
+        $_real_filenames{$current_file} = _get_real_path( $current_file, $current_file );
+    }
+
     _report "* Step at %s:: %s line %s with %s, %s-%s-%s, depth %s",
         $current_package // 'undef',
         $current_file // 'undef',
@@ -390,7 +441,7 @@ sub step_handler
     return;
 }
 
-sub _get_current_frame
+sub _get_current_stack_frame
 {
     return $_stack_frames->[0];
 }
@@ -402,16 +453,36 @@ sub _enter_frame
     my ($args_ref) = @_;
     _set_dbline();
 
-    my $_current_stack_frame = {
+    my $sub_file = '';
+    my $sub_line = 0;
+
+    if ($DB::sub{$DB::sub})
+    {
+        if ($DB::sub{$DB::sub} =~ /^(.+?):(\d+)-(\d+)$/)
+        {
+            $sub_file = $1;
+            $sub_line = $2;
+        }
+        else
+        {
+            _report( "*** Unable to parse sub data for %s, %s", $DB::sub, $DB::sub{$DB::sub} );
+        }
+    }
+    else
+    {
+        _report( "*** Unable to find file data for %s, %s", $DB::sub, join ', ', keys %DB::sub );
+    }
+
+    my $new_stack_frame = {
         subname       => $DB::sub,
         args          => $args_ref,
-        from_file     => $current_file,
-        from_line     => $current_line,
+        file          => $sub_file,
+        current_line  => $sub_line,
         _single       => $DB::single,
         _lexical_vars => peek_my( 1 ),
         _dbline       => *DB::dbline
     };
-    unshift @$_stack_frames, $_current_stack_frame;
+    unshift @$_stack_frames, $new_stack_frame;
     $DB::single = STEP_CONTINUE;
 
     if (!$_frame_passthrough)
@@ -425,23 +496,23 @@ sub _enter_frame
             $current_line // 'undef',
             $DB::trace // 'undef',
             $DB::signal // 'undef',
-            $_current_stack_frame->{_single} // 'undef',
+            $new_stack_frame->{_single} // 'undef',
             scalar @$_stack_frames,
         ;
         $_frame_passthrough = 0;
     }
 
-    if ($_current_stack_frame->{_single} == STEP_OVER)
+    if ($new_stack_frame->{_single} == STEP_OVER)
     {
         print STDERR "Disabling step in in subs\n";
         $DB::single = STEP_CONTINUE;
     }
     else
     {
-        $DB::single = $_current_stack_frame->{_single};
+        $DB::single = $new_stack_frame->{_single};
     }
     ($@, $!, $,, $/, $\, $^W) = @saved;
-    return $_current_stack_frame;
+    return $new_stack_frame;
 }
 
 sub _exit_frame
@@ -499,6 +570,27 @@ sub lsub_handler: lvalue
     }
 }
 
+sub _get_real_path
+{
+    my $path = shift;
+    my $new_filename = shift;
+
+    my $real_path;
+
+    if ($path !~ m{^(/|\w\:)})
+    {
+        # relative
+        my $current_dir = getcwd;
+        $real_path = "$current_dir/$path";
+    }
+    else
+    {
+        $real_path = $path;
+    }
+    print STDERR "$new_filename real path is $real_path\n";
+    return $real_path;
+}
+
 # After each required file is compiled, but before it is executed, DB::postponed(*{"::_<$filename"}) is called if the
 # subroutine DB::postponed exists. Here, the $filename is the expanded name of the required file, as found in the values
 # of %INC.
@@ -518,19 +610,7 @@ sub load_handler
     if ($new_filename =~ /_<(.+)$/)
     {
         my $path = $1;
-        my $real_path = $path;
-        if ($path !~ m{^(/|\w\:)})
-        {
-            # relative
-            my $current_dir = getcwd;
-            $real_path = "$current_dir/$path";
-            print STDERR "$new_filename real path is $real_path\n";
-        }
-        else
-        {
-            print STDERR "$new_filename is absolute path\n";
-        }
-        $_real_filenames{$path} = $real_path;
+        $_real_filenames{$path} = _get_real_path( $path, $new_filename );
     }
     else
     {
@@ -613,16 +693,17 @@ $_debug_socket->autoflush( 1 );
 ($current_package, $current_file, $current_line) = caller;
 _set_dbline();
 push @$_stack_frames, {
-        subname       => '',
+        subname       => 'SCRIPT',
         args          => [ @ARGV ],
-        from_file     => $current_file,
-        from_line     => $current_line,
+        file          => $current_file,
+        current_line  => $current_line,
         _single       => STEP_INTO,
         _dbline       => *DB::dbline,
         _lexical_vars => { }
     };
 
-getcwd; # this really loads something
+$_real_filenames{$current_file} = _get_real_path( $current_file, $current_file );
+getcwd;
 
 *DB::DB = \&step_handler;
 *DB::sub = \&sub_handler;
