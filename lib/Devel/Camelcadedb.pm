@@ -6,47 +6,47 @@ package DB;
 use 5.008;
 use strict;
 use warnings;
-use Data::Dumper;
-use PadWalker qw/peek_sub peek_my/;
-use Scalar::Util qw/reftype/;
-use B::Deparse;
-use JSON::XS;
-use Cwd;
 use IO::Socket::INET;
-use constant {
-    FLAG_SUB_ENTER_EXIT         => 0x01,
-    FLAG_LINE_BY_LINE           => 0x02,
-    FLAG_OPTIMIZATIONS_OFF      => 0x04,
-    FLAG_MORE_DATA              => 0x08,
-    FLAG_SOURCE_LINES           => 0x10,
-    FLAG_SINGLE_STEP_ON         => 0x20,
-    FLAG_USE_SUB_ADDRESS        => 0x40,
-    FLAG_REPORT_GOTO            => 0x80,
-    FLAG_EVAL_FILENAMES         => 0x100,
-    FLAG_ANON_FILENAMES         => 0x200,
-    FLAG_STORE_SOURCES          => 0x400,
-    FLAG_KEEP_SUBLESS_EVALS     => 0x800,
-    FLAG_KEEP_UNCOMPILED_SOURCE => 0x1000,
-    FLAGS_DESCRIPTIVE_NAMES     => [
-        q{Debug subroutine enter/exit.},
-        q{Line-by-line debugging. Causes DB::DB() subroutine to be called for each statement executed. Also causes saving source code lines (like 0x400).}
-        ,
-        q{Switch off optimizations.},
-        q{Preserve more data for future interactive inspections.},
-        q{Keep info about source lines on which a subroutine is defined.},
-        q{Start with single-step on.},
-        q{Use subroutine address instead of name when reporting.},
-        q{Report goto &subroutine as well.},
-        q{Provide informative "file" names for evals based on the place they were compiled.},
-        q{Provide informative names to anonymous subroutines based on the place they were compiled.},
-        q{Save source code lines into @{"::_<$filename"}.},
-        q{When saving source, include evals that generate no subroutines.},
-        q{When saving source, include source that did not compile.},
-    ],
-    STEP_CONTINUE               => 0,
-    STEP_INTO                   => 1,
-    STEP_OVER                   => 2,
-};
+use PadWalker qw/peek_my/;
+#use constant {
+#    FLAG_SUB_ENTER_EXIT         => 0x01,
+#    FLAG_LINE_BY_LINE           => 0x02,
+#    FLAG_OPTIMIZATIONS_OFF      => 0x04,
+#    FLAG_MORE_DATA              => 0x08,
+#    FLAG_SOURCE_LINES           => 0x10,
+#    FLAG_SINGLE_STEP_ON         => 0x20,
+#    FLAG_USE_SUB_ADDRESS        => 0x40,
+#    FLAG_REPORT_GOTO            => 0x80,
+#    FLAG_EVAL_FILENAMES         => 0x100,
+#    FLAG_ANON_FILENAMES         => 0x200,
+#    FLAG_STORE_SOURCES          => 0x400,
+#    FLAG_KEEP_SUBLESS_EVALS     => 0x800,
+#    FLAG_KEEP_UNCOMPILED_SOURCE => 0x1000,
+#    FLAGS_DESCRIPTIVE_NAMES     => [
+#        q{Debug subroutine enter/exit.},
+#        q{Line-by-line debugging. Causes DB::DB() subroutine to be called for each statement executed. Also causes saving source code lines (like 0x400).}
+#        ,
+#        q{Switch off optimizations.},
+#        q{Preserve more data for future interactive inspections.},
+#        q{Keep info about source lines on which a subroutine is defined.},
+#        q{Start with single-step on.},
+#        q{Use subroutine address instead of name when reporting.},
+#        q{Report goto &subroutine as well.},
+#        q{Provide informative "file" names for evals based on the place they were compiled.},
+#        q{Provide informative names to anonymous subroutines based on the place they were compiled.},
+#        q{Save source code lines into @{"::_<$filename"}.},
+#        q{When saving source, include evals that generate no subroutines.},
+#        q{When saving source, include source that did not compile.},
+#    ],
+#};
+
+sub FLAG_REPORT_GOTO() {0x80;}
+
+sub STEP_CONTINUE() {0;}
+sub STEP_INTO() {1;}
+sub STEP_OVER() {2;}
+
+
 
 # Each array @{"::_<$filename"} holds the lines of $filename for a file compiled by Perl. The same is also true for evaled
 # strings that contain subroutines, or which are currently being executed. The $filename for evaled strings looks like
@@ -129,21 +129,41 @@ my $_debug_net_role;        # server or client, we'll use ENV for this
 my $_debug_socket;
 my $_debug_packed_address;
 
-my JSON::XS $coder = JSON::XS->new()->latin1();
+my $coder;  # JSON::XS coder
+
+my $frame_prefix_step = "  ";
+my $frame_prefix = '';
+
+my $_internal_process = 0;
 
 my @saved;  # saved runtime environment
 
-my $current_line;
 my $current_package;
 my $current_file;
+my $current_line;
+my $current_sub;
+my $current_hasargs;
+my $current_wantarray;
+my $current_evaltext;
+my $current_is_require;
+my $current_hints;
+my $current_bitmask;
+my $current_hinthash;
+
+my $trace_set_db_line = 0; # report _set_dbline invocation
 
 my $_stack_frames = [ ];     # stack frames
 
-my $_deparser;
+sub _dump
+{
+    require Data::Dumper;
+    return Data::Dumper->Dump( [ @_ ] );
+}
 
 sub _report($;@)
 {
     my ($message, @sprintf_args) = @_;
+    chomp $message;
     printf STDERR "$message\n", @sprintf_args;
 }
 
@@ -152,11 +172,13 @@ sub _render_variables
     my ($vars_hash) = @_;
     my $result = '';
 
+    require Scalar::Util;
+
     foreach my $variable (keys %$vars_hash)
     {
         my $value = $vars_hash->{$variable};
 
-        my $reftype = reftype $value;
+        my $reftype = Scalar::Util::reftype $value;
         my $ref = ref $value;
         my $appendix = '';
 
@@ -213,6 +235,18 @@ sub _get_adjusted_line_number
     return $line_number;
 }
 
+sub _serialize
+{
+    my ($data) = @_;
+    unless ($coder)
+    {
+        require JSON::XS;
+        $coder = JSON::XS->new();
+        $coder->latin1();
+    }
+    return $coder->encode( $data );
+}
+
 sub _get_stop_command
 {
     my $data = {
@@ -235,7 +269,7 @@ sub _get_stop_command
 
         if (!defined $new_frame->{file})
         {
-            _report( "Couldn't find real filename for %s, %s", Dumper( $stack_frame ), Dumper( \%_real_filenames ) );
+            _report( "Couldn't find real filename for %s, %s", _dump( $stack_frame ), _dump( \%_real_filenames ) );
             $new_frame->{file} = $stack_frame->{file};
         }
 
@@ -244,7 +278,7 @@ sub _get_stop_command
         push @$frames, $new_frame;
     }
 
-    return $coder->encode( $data );
+    return _serialize( $data );
 }
 
 sub _event_handler
@@ -255,7 +289,7 @@ sub _event_handler
         my $command = <$_debug_socket>;
         die 'Debugging socket disconnected' if !defined $command;
         $command =~ s/[\r\n]+$//;
-        print STDERR "Got command: '$command'\n";
+        print STDERR "============> Got command: '$command'\n";
 
         if ($command eq 'q')
         {
@@ -273,7 +307,7 @@ sub _event_handler
         }
         elsif ($command eq 's') # dump %sub
         {
-            print STDERR Dumper( \%DB::sub );
+            print STDERR _dump( \%DB::sub );
         }
         elsif ($command =~ /^e\s+(.+)$/) # eval expresion
         {
@@ -287,7 +321,7 @@ sub _event_handler
         }
         elsif ($command eq 'f') # dump keys of %DB::dbline
         {
-            print STDERR Dumper( \%_real_filenames );
+            print STDERR _dump( \%_real_filenames );
         }
         elsif ($command eq 'g')
         {
@@ -301,7 +335,7 @@ sub _event_handler
         elsif ($command eq 'b') # show breakpoints
         {
             no strict 'refs';
-            print Dumper( \%DB::dbline );
+            print _dump( \%DB::dbline );
         }
         elsif ($command =~ /^b (\d+)$/)
         {
@@ -380,7 +414,7 @@ sub _event_handler
                 #
                 #                _report( 'Variables: %s', Dumper(peek_sub($coderef)));
 
-                _report( "    * Lexical variables:\n%s", _render_variables( $frame->{_lexical_vars} ) );
+                _report( "    * Lexical variables:\n%s", _render_variables( $frame->{lexical_vars} ) );
             }
         }
         else
@@ -393,6 +427,39 @@ sub _event_handler
 
 sub _set_dbline
 {
+    ($current_package,
+        $current_file,
+        $current_line,
+        $current_sub,
+        $current_hasargs,
+        $current_wantarray,
+        $current_evaltext,
+        $current_is_require,
+        $current_hints,
+        $current_bitmask,
+        $current_hinthash
+    ) = caller( 1 );
+
+    print STDERR $frame_prefix.'Unknown caller' if !defined $current_line;
+
+    _report( <<'EOM',
+%sCaller: %s %s::%s%s in %s, %s, ev:%s; s:%s w:%s %s-%s-%s
+EOM
+        $frame_prefix,
+            defined $current_wantarray ? $current_wantarray ? 'array' : 'scalar' : 'void',
+        $current_package // 'undef',
+        $current_sub // 'undef',
+            $current_is_require ? '(require)' : '',
+        $current_file // 'undef',
+        $current_line // 'undef',
+        $current_evaltext // 'undef',
+        $current_hints // '', # strict
+        $current_bitmask // '', # warnings
+        $current_hasargs // 'undef',
+        $current_hinthash // 'undef',
+        ${^GLOBAL_PHASE} // 'unknown',
+    );
+
     no strict 'refs';
     *DB::dbline = *{"::_<$current_file"};
 }
@@ -402,45 +469,8 @@ sub _update_frame_position
     my $current_stack_frame = _get_current_stack_frame();
     $current_stack_frame->{current_line} = $current_line;
     $current_stack_frame->{file} = $current_file;
+    $current_stack_frame->{lexical_vars} = peek_my( 2 );
     $_real_filenames{$current_file} //= _get_real_path( $current_file, $current_file );
-}
-
-# When the execution of your program reaches a point that can hold a breakpoint, the DB::DB() subroutine is called if
-# any of the variables $DB::trace , $DB::single , or $DB::signal is true. These variables are not localizable. This
-# feature is disabled when executing inside DB::DB() , including functions called from it unless $^D & (1<<30) is true.
-sub step_handler
-{
-    #    if( $DB::single == STEP_OVER ) fixme this might work with slight tuning
-    #    {
-    #        $DB::single = STEP_CONTINUE;
-    #        return;
-    #    }
-
-    my $old_db_single = $DB::single;
-    $DB::single = STEP_CONTINUE;
-    @saved = ($@, $!, $,, $/, $\, $^W);
-
-    ($current_package, $current_file, $current_line) = caller;
-    _set_dbline();
-    _update_frame_position();
-
-    _report "* Step at %s:: %s line %s with %s, %s-%s-%s, depth %s",
-        $current_package // 'undef',
-        $current_file // 'undef',
-        $current_line // 'undef',
-        (join ',', @_) // '',
-        $DB::trace // 'undef',
-        $DB::signal // 'undef',
-        $old_db_single // 'undef',
-        scalar @$_stack_frames,
-    ;
-
-    print STDERR $DB::dbline[$current_line];
-
-    _event_handler( );
-
-    ($@, $!, $,, $/, $\, $^W) = @saved;
-    return;
 }
 
 sub _get_current_stack_frame
@@ -448,13 +478,20 @@ sub _get_current_stack_frame
     return $_stack_frames->[0];
 }
 
-my $_frame_passthrough = 0;
 sub _enter_frame
 {
-    @saved = ($@, $!, $,, $/, $\, $^W);
-    my ($args_ref) = @_;
-    _set_dbline();
+    my ($args_ref, $old_db_single) = @_;
     _update_frame_position();
+
+    _report $frame_prefix."Entering frame %s: %s%s %s-%s-%s",
+        scalar @$_stack_frames + 1,
+        $DB::sub,
+            scalar @$args_ref ? '('.(join ', ', @$args_ref).')' : '()',
+        $DB::trace // 'undef',
+        $DB::signal // 'undef',
+        $old_db_single // 'undef',
+    ;
+    $frame_prefix = $frame_prefix_step x (scalar @$_stack_frames + 1);
 
     my $sub_file = '';
     my $sub_line = 0;
@@ -468,46 +505,29 @@ sub _enter_frame
         }
         else
         {
-            _report( "*** Unable to parse sub data for %s, %s", $DB::sub, $DB::sub{$DB::sub} );
+            _report( $frame_prefix."  * Unable to parse sub data for %s, %s", $DB::sub, $DB::sub{$DB::sub} );
         }
     }
     else
     {
-        _report( "*** Unable to find file data for %s, %s", $DB::sub, join ', ', keys %DB::sub );
+        _report( $frame_prefix."  * Unable to find file data for %s, %s", $DB::sub, "" #join ', ', keys %DB::sub
+        );
     }
 
     my $new_stack_frame = {
-        subname       => $DB::sub,
-        args          => $args_ref,
-        file          => $sub_file,
-        current_line  => $sub_line,
-        _single       => $DB::single,
-        _lexical_vars => peek_my( 1 ),
-        _dbline       => *DB::dbline
+        subname      => $DB::sub,
+        args         => $args_ref,
+        file         => $sub_file,
+        current_line => $sub_line,
+        _single      => $DB::single,
+        _dbline      => *DB::dbline
     };
     unshift @$_stack_frames, $new_stack_frame;
     $DB::single = STEP_CONTINUE;
 
-    if (!$_frame_passthrough)
-    {
-        $_frame_passthrough = 1;
-        _report "* Entering frame %s%s from %s:: %s line %s %s-%s-%s, depth: %s",
-            $DB::sub,
-                scalar @_ ? ' with '.(join ',', @_) : '',
-            $current_package // 'undef',
-            $current_file // 'undef',
-            $current_line // 'undef',
-            $DB::trace // 'undef',
-            $DB::signal // 'undef',
-            $new_stack_frame->{_single} // 'undef',
-            scalar @$_stack_frames,
-        ;
-        $_frame_passthrough = 0;
-    }
-
     if ($new_stack_frame->{_single} == STEP_OVER)
     {
-        print STDERR "Disabling step in in subs\n";
+        print STDERR $frame_prefix."Disabling step in in subs\n";
         $DB::single = STEP_CONTINUE;
     }
     else
@@ -518,59 +538,16 @@ sub _enter_frame
     return $new_stack_frame;
 }
 
+
 sub _exit_frame
 {
     @saved = ($@, $!, $,, $/, $\, $^W);
-    _report " * Leaving frame, from: %s", scalar @$_stack_frames;
     my $frame = shift @$_stack_frames;
+    $frame_prefix = $frame_prefix_step x (scalar @$_stack_frames);
+    _report $frame_prefix."Leaving frame %s, setting single to %s", (scalar @$_stack_frames + 1), $frame->{_single};
     $DB::single = $frame->{_single};
     *DB::dbline = $frame->{_dbline};
     ($@, $!, $,, $/, $\, $^W) = @saved;
-}
-
-# this pass-through flag handles quotation overload loop
-sub sub_handler
-{
-    ($current_package, $current_file, $current_line) = caller;
-    _enter_frame( [ @_ ] );
-
-    if (wantarray)
-    {
-        no strict 'refs';
-        @DB::ret = &$DB::sub;
-        _exit_frame();
-        return @DB::ret;
-    }
-    elsif (defined wantarray)
-    {
-        no strict 'refs';
-        $DB::ret = &$DB::sub;
-        _exit_frame();
-        return $DB::ret;
-    }
-    else
-    {
-        no strict 'refs';
-        &$DB::sub;
-        $DB::ret = undef;
-        _exit_frame();
-        return;
-    }
-}
-
-# If the call is to an lvalue subroutine, and &DB::lsub is defined &DB::lsub (args) is called instead, otherwise
-# falling back to &DB::sub (args).
-sub lsub_handler: lvalue
-{
-    ($current_package, $current_file, $current_line) = caller;
-    _enter_frame( [ @_ ] );
-
-    {
-        no strict 'refs';
-        $DB::ret = &$DB::sub;
-        _exit_frame();
-        return $DB::ret;
-    }
 }
 
 sub _get_real_path
@@ -582,17 +559,137 @@ sub _get_real_path
 
     if ($path !~ m{^(/|\w\:)})
     {
-        # relative
-        my $current_dir = getcwd;
+        print STDERR $frame_prefix."Detecting path for $path\n";
+
+        my $current_dir = Cwd::getcwd();
+
         $real_path = "$current_dir/$path";
     }
     else
     {
         $real_path = $path;
     }
-    print STDERR "$new_filename real path is $real_path\n";
+    print STDERR $frame_prefix."  * $new_filename real path is $real_path\n";
     return $real_path;
 }
+
+
+# When the execution of your program reaches a point that can hold a breakpoint, the DB::DB() subroutine is called if
+# any of the variables $DB::trace , $DB::single , or $DB::signal is true. These variables are not localizable. This
+# feature is disabled when executing inside DB::DB() , including functions called from it unless $^D & (1<<30) is true.
+sub step_handler
+{
+    return if $_internal_process;
+    $_internal_process = 1;
+
+    my $old_db_single = $DB::single;
+    $DB::single = STEP_CONTINUE;
+    @saved = ($@, $!, $,, $/, $\, $^W);
+
+    print STDERR $frame_prefix."Set dbline from step handler\n" if $trace_set_db_line;
+    _set_dbline();
+    _update_frame_position();
+
+    _report $frame_prefix."Step with %s, %s-%s-%s",
+        (join ',', @_) // '',
+        $DB::trace // 'undef',
+        $DB::signal // 'undef',
+        $old_db_single // 'undef',
+    ;
+
+    print STDERR $DB::dbline[$current_line];
+
+    _event_handler( );
+
+    ($@, $!, $,, $/, $\, $^W) = @saved;
+    $_internal_process = 0;
+    return;
+}
+
+
+# this pass-through flag handles quotation overload loop
+sub sub_handler
+{
+    @saved = ($@, $!, $,, $/, $\, $^W);
+    my $stack_frame;
+
+    if (!$_internal_process)
+    {
+        $_internal_process = 1;
+        my $old_db_single = $DB::single;
+
+        $DB::single = STEP_CONTINUE;
+
+        print STDERR $frame_prefix."Set dbline from sub handler $DB::sub\n" if $trace_set_db_line;
+        _set_dbline();
+        $stack_frame = _enter_frame( [ @_ ], $old_db_single );
+
+        if ($current_package && $current_package eq 'DB')
+        {
+            printf STDERR "    * Second frame for %s is %s\n", $DB::sub, join ', ', map $_ // 'undef', caller( 1 );
+        }
+
+        $DB::single = $old_db_single;
+        $_internal_process = 0;
+    }
+
+    my $wantarray = wantarray;
+    if ($DB::sub eq 'DESTROY' or substr( $DB::sub, -9 ) eq '::DESTROY' or !defined $wantarray)
+    {
+        no strict 'refs';
+        ($@, $!, $,, $/, $\, $^W) = @saved;
+        &$DB::sub;
+        _exit_frame() if $stack_frame;
+        return $DB::ret = undef;
+    }
+    if ($wantarray)
+    {
+        no strict 'refs';
+        ($@, $!, $,, $/, $\, $^W) = @saved;
+        my @result = &$DB::sub;
+        _exit_frame() if $stack_frame;
+        return @DB::ret = @result;
+    }
+    else
+    {
+        no strict 'refs';
+        ($@, $!, $,, $/, $\, $^W) = @saved;
+        my $result = &$DB::sub;
+        _exit_frame() if $stack_frame;
+        return $DB::ret = $result;
+    }
+}
+
+# If the call is to an lvalue subroutine, and &DB::lsub is defined &DB::lsub (args) is called instead, otherwise
+# falling back to &DB::sub (args).
+sub lsub_handler: lvalue
+{
+    @saved = ($@, $!, $,, $/, $\, $^W);
+    my $stack_frame;
+
+    if (!$_internal_process)
+    {
+        $_internal_process = 1;
+        my $old_db_single = $DB::single;
+
+        $DB::single = STEP_CONTINUE;
+        print STDERR $frame_prefix."Set dbline from lsub handler\n" if $trace_set_db_line;
+        _set_dbline();
+        $stack_frame = _enter_frame( [ @_ ], $old_db_single );
+
+        $DB::single = $old_db_single;
+        $_internal_process = 0;
+    }
+
+    {
+        no strict 'refs';
+        ($@, $!, $,, $/, $\, $^W) = @saved;
+        my $result = &$DB::sub;
+        _exit_frame() if $stack_frame;
+        return $DB::ret = $result;
+    }
+}
+
 
 # After each required file is compiled, but before it is executed, DB::postponed(*{"::_<$filename"}) is called if the
 # subroutine DB::postponed exists. Here, the $filename is the expanded name of the required file, as found in the values
@@ -606,9 +703,21 @@ sub load_handler
     $DB::single = STEP_CONTINUE;
     @saved = ($@, $!, $,, $/, $\, $^W);
 
-    ($current_package, $current_file, $current_line) = caller;
-    _set_dbline();
-    _update_frame_position();
+    if (!$_internal_process)
+    {
+        $_internal_process = 1;
+        print STDERR $frame_prefix."Set dbline from load handler\n" if $trace_set_db_line;
+        _set_dbline();
+        _update_frame_position();
+        $_internal_process = 0;
+    }
+
+    _report $frame_prefix."Loading module: %s %s-%s-%s",
+        $_[0],
+        $DB::trace // 'undef',
+        $DB::signal // 'undef',
+        $old_db_single // 'undef',
+    ;
 
     my $new_filename = $_[0];
     if ($new_filename =~ /_<(.+)$/)
@@ -621,16 +730,6 @@ sub load_handler
         die "Incorrect file: $new_filename";
     }
 
-    _report "* DB::postponed called%s from %s:: %s line %s %s-%s-%s",
-            scalar @_ ? ' with '.(join ',', @_) : '',
-        $current_package // 'undef',
-        $current_file // 'undef',
-        $current_line // 'undef',
-        $DB::trace // 'undef',
-        $DB::signal // 'undef',
-        $old_db_single // 'undef',
-    ;
-
     ($@, $!, $,, $/, $\, $^W) = @saved;
     $DB::single = $old_db_single;
 }
@@ -638,17 +737,18 @@ sub load_handler
 # &DB::goto is made, with $DB::sub holding the name of the subroutine being entered.
 sub goto_handler
 {
+    return if $_internal_process;
+    $_internal_process = 1;
+
     my $old_db_single = $DB::single;
     $DB::single = STEP_CONTINUE;
 
     @saved = ($@, $!, $,, $/, $\, $^W);
-    ($current_package, $current_file, $current_line) = caller;
+    print STDERR $frame_prefix."Set dbline from goto handler\n" if $trace_set_db_line;
     _set_dbline();
     _update_frame_position();
 
-    if (!$current_package || $current_package ne 'DB')
-    {
-        _report "* DB::goto called%s from %s:: %s line %s %s-%s-%s",
+    _report $frame_prefix."Goto called%s from %s:: %s line %s %s-%s-%s-%s",
                 scalar @_ ? ' with '.(join ',', @_) : '',
             $current_package // 'undef',
             $current_file // 'undef',
@@ -656,17 +756,17 @@ sub goto_handler
             $DB::trace // 'undef',
             $DB::signal // 'undef',
             $old_db_single // 'undef',
+        ${^GLOBAL_PHASE} // 'unknown',
         ;
-    }
     ($@, $!, $,, $/, $\, $^W) = @saved;
     $DB::single = $old_db_single;
+    $_internal_process = 0;
 }
 
 
 $_local_debug_host = 'localhost';
 $_local_debug_port = 12345;
 $_debug_net_role = 'server';
-$_deparser = B::Deparse->new();
 
 $^P |= FLAG_REPORT_GOTO;
 
@@ -695,26 +795,32 @@ else
 }
 $_debug_socket->autoflush( 1 );
 
-($current_package, $current_file, $current_line) = caller;
+print STDERR $frame_prefix."Set dbline from main\n" if $trace_set_db_line;
 _set_dbline();
-push @$_stack_frames, {
-        subname       => 'SCRIPT',
-        args          => [ @ARGV ],
-        file          => $current_file,
-        current_line  => $current_line,
-        _single       => STEP_INTO,
-        _dbline       => *DB::dbline,
-        _lexical_vars => { }
-    };
 
-$_real_filenames{$current_file} = _get_real_path( $current_file, $current_file );
-getcwd;
+push @$_stack_frames, {
+        subname      => 'SCRIPT',
+        args         => [ @ARGV ],
+        file         => $current_file,
+        current_line => $current_line,
+        _single      => STEP_INTO,
+        _dbline      => *DB::dbline,
+    };
 
 *DB::DB = \&step_handler;
 *DB::sub = \&sub_handler;
 *DB::lsub = \&lsub_handler;
 *DB::postponed = \&load_handler;
 *DB::goto = \&goto_handler;
+
+require Cwd;
+Cwd::getcwd();
+
+$_real_filenames{$current_file} = _get_real_path( $current_file, $current_file );
+$frame_prefix = $frame_prefix_step;
+
 $DB::single = STEP_INTO;
+
+#$DB::single = STEP_CONTINUE;
 
 1; # End of Devel::Camelcadedb
