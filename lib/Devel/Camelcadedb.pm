@@ -315,7 +315,7 @@ sub _send_string_to_debugger
     my ($string) = @_;
     $string .= "\n";
     print $_debug_socket $string;
-    print STDERR "* Sent to debugger: $string\n";
+    print STDERR "* Sent to debugger: $string";
 }
 
 sub _get_adjusted_line_number
@@ -692,6 +692,38 @@ sub _get_real_path_by_perl_file_id
     return _get_real_path_by_normalized_perl_file_id( _get_normalized_perl_file_id( $perl_file_id ) );
 }
 
+sub _get_loaded_breakpoints_by_real_path
+{
+    my ($path) = @_;
+    return exists $_loaded_breakpoints{$path} ? $_loaded_breakpoints{$path} : undef;
+}
+
+sub _get_loaded_breakpoints_by_file_id
+{
+    my ($file_id) = @_;
+    return _get_loaded_breakpoints_by_real_path( _get_real_path_by_perl_file_id( $file_id ) );
+}
+
+sub _set_breakpoint
+{
+    my ($path, $line, $source_lines, $breakpoints_map) = @_;
+
+    my $event_data = {
+        path => $path,
+        line => $line - 1,
+    };
+
+    if ($source_lines->[$line] == 0)
+    {
+        _queue_event( "BREAKPOINT_DENIED", $event_data );
+    }
+    else
+    {
+        $breakpoints_map->{$line} = 1;
+        _queue_event( "BREAKPOINT_SET", $event_data );
+    }
+}
+
 sub _process_new_breakpoints
 {
     my ($json_data) = @_;
@@ -706,20 +738,7 @@ sub _process_new_breakpoints
 
         if ((my $breakpoints_map = _get_perl_line_breakpoints_map_by_real_path( $path )) && (my $source_lines = _get_perl_source_lines_by_real_path( $path )))
         {
-            my $event_data = {
-                path => $path,
-                line => $line - 1,
-            };
-
-            if ($source_lines->[$line] == 0)
-            {
-                _queue_event( "BREAKPOINT_DENIED", $event_data );
-            }
-            else
-            {
-                $breakpoints_map->{$line} = 1;
-                _queue_event( "BREAKPOINT_SET", $event_data );
-            }
+            _set_breakpoint( $path, $line, $source_lines, $breakpoints_map );
         }
         # suppose is not loaded
     }
@@ -727,11 +746,20 @@ sub _process_new_breakpoints
 
 sub _set_break_points_for_file
 {
-    my ($file_id, $set_all) = @_;
+    my ($file_id) = @_;
 
-    my @request = ();
+    my $real_path = _get_real_path_by_perl_file_id( $file_id );
 
-    print STDERR $frame_prefix."Requesting breakpoints for: "._serialize( \@request )."\n";
+    if (( my $loaded_breakpoints = _get_loaded_breakpoints_by_real_path( $real_path )) &&
+        (my $perl_breakpoints_map = _get_perl_line_breakpoints_map_by_real_path( $real_path )) &&
+        (my $perl_source_lines = _get_perl_source_lines_by_real_path( $real_path ))
+    )
+    {
+        foreach my $line (keys %$loaded_breakpoints)
+        {
+            _set_breakpoint( $real_path, $line, $perl_source_lines, $perl_breakpoints_map );
+        }
+    }
 }
 
 sub _calc_real_path
@@ -954,7 +982,6 @@ sub load_handler
         _update_frame_position();
     }
 
-
     _report $frame_prefix."Loading module: %s => %s %s-%s-%s",
         $perl_file_id,
         $real_path,
@@ -1065,8 +1092,6 @@ _report "Waiting for breakpoints...";
 my $breakpoints_data = <$_debug_socket>;
 die "Connection closed" unless defined $breakpoints_data;
 _process_new_breakpoints( $breakpoints_data );
-
-_set_break_points_for_file( undef, 1 );
 
 $_internal_process = 0;
 $ready_to_go = 1;
