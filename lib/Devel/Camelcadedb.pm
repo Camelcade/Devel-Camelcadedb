@@ -120,6 +120,10 @@ our $ret = '';        # return value of last sub executed in scalar context
 my %_perl_file_id_to_path_map = ();  # map of perl file ids without _<  => real path detected on loading
 my %_paths_to_perl_file_id_map = (); # maps real paths to _<filename
 
+my @_events_queue = ();     # queue for events, need to be sent to the IDEA
+
+my %_loaded_breakpoints = (); # map of loaded breakpoints, set and not in form: path => line => object
+
 my $_debug_server_host;     # remote debugger host
 my $_debug_server_port;     # remote debugger port
 
@@ -182,7 +186,16 @@ sub _format_caller
             $caller[9], # warnings
             $caller[10], # hinthash
     ;
+}
 
+sub _queue_event
+{
+    my ($name, $data) = @_;
+
+    push @_events_queue, {
+            event => $name,
+            data  => $data
+        };
 }
 
 sub _get_loaded_files_map
@@ -220,7 +233,7 @@ sub _dump_frames
     {
         printf STDERR $frame_prefix.$frame_prefix_step."%s: %s\n", $depth++,
             join ', ', map $_ // 'undef', @$frame{qw/subname file current_line _single/},
-                        $$frame{is_use_block} ? '(use block)' : ''
+                        $frame->{is_use_block} ? '(use block)' : ''
         ;
     }
     1;
@@ -291,57 +304,70 @@ sub _get_current_stack_frame
     return $_stack_frames->[0];
 }
 
-sub _send_to_debugger
+sub _send_event_to_debugger
+{
+    my ($event) = @_;
+    _send_string_to_debugger( _serialize( $event ) );
+}
+
+sub _send_string_to_debugger
 {
     my ($string) = @_;
     $string .= "\n";
     print $_debug_socket $string;
-    #    print STDERR "* Sent to debugger: $string";
+    print STDERR "* Sent to debugger: $string\n";
 }
 
 sub _get_adjusted_line_number
 {
-    my ($filename, $line_number) = @_;
-    $line_number--;
-    return $line_number;
+    my ($line_number) = @_;
+    return $line_number - 1;
 }
 
-sub _serialize
+#@returns JSON::XS
+sub _get_seraizlier
 {
-    my ($data) = @_;
     unless ($coder)
     {
         $coder = JSON::XS->new();
         $coder->latin1();
     }
-    return $coder->encode( $data );
+    return $coder;
 }
 
-sub _get_stop_command
+sub _serialize
 {
-    my $data = {
-        event  => 'STOP',
-        frames => [
-        ],
-    };
+    my ($data) = @_;
+    return _get_seraizlier->encode( $data );
+}
 
-    my $frames = $data->{frames};
+sub _deserialize
+{
+    my ($json_string) = @_;
+    return _get_seraizlier->decode( $json_string );
+}
+
+sub _get_stop_event_data
+{
+    my $frames = [ ];
 
     foreach my $stack_frame (@{$_stack_frames})
     {
         my $new_frame = {
             name => "$stack_frame->{subname}",
-            file => $_perl_file_id_to_path_map{$stack_frame->{file}},
-            line => _get_adjusted_line_number( $stack_frame->{file}, $stack_frame->{current_line} ),
+            file => _get_real_path_by_normalized_perl_file_id( $stack_frame->{file} ),
+            line => _get_adjusted_line_number( $stack_frame->{current_line} ),
         };
 
         # fixme handle Step at main:: (eval 25)[C:\Repository\IDEA-Perl5-Debugger\testscript.pl:40] line 2 with , 0-0-2, depth 1
 
         if (!defined $new_frame->{file})
         {
-            _report( "Couldn't find real filename for %s, %s", _dump( $stack_frame ),
+            _report( "PANIC: Couldn't find real filename for %s, %s",
+                _dump( $stack_frame ),
                 _dump( \%_perl_file_id_to_path_map ) );
-            $new_frame->{file} = $stack_frame->{file};
+            die;
+            #$new_frame->{file} = $stack_frame->{file};
         }
 
         $new_frame->{file} =~ s{\\}{/};
@@ -349,14 +375,20 @@ sub _get_stop_command
         push @$frames, $new_frame;
     }
 
-    return _serialize( $data );
+    return $frames;
 }
 
 sub _event_handler
 {
-    _send_to_debugger( _get_stop_command() );
+    _queue_event( "STOP", _get_stop_event_data() );
+
     while()
     {
+        while( scalar @_events_queue )
+        {
+            _send_event_to_debugger( shift @_events_queue );
+        }
+
         my $command = <$_debug_socket>;
         die 'Debugging socket disconnected' if !defined $command;
         $command =~ s/[\r\n]+$//;
@@ -606,6 +638,39 @@ sub _get_normalized_perl_file_id
 
 }
 
+sub _get_perl_file_id_by_real_path
+{
+    my ($path) = @_;
+    return exists $_paths_to_perl_file_id_map{$path} ? $_paths_to_perl_file_id_map{$path} : undef;
+}
+
+
+sub _get_perl_line_breakpoints_map_by_file_id
+{
+    my ($file_id) = @_;
+    my $glob = $::{"_<$file_id"};
+    return $glob ? *$glob{HASH} : undef;
+}
+
+sub _get_perl_line_breakpoints_map_by_real_path
+{
+    my ($real_path) = @_;
+    return _get_perl_line_breakpoints_map_by_file_id( _get_perl_file_id_by_real_path( $real_path ) );
+}
+
+sub _get_perl_source_lines_by_file_id
+{
+    my ($file_id) = @_;
+    my $glob = $::{"_<$file_id"};
+    return $glob && *$glob{ARRAY} && scalar @{*$glob{ARRAY}} ? *$glob{ARRAY} : undef;
+}
+
+sub _get_perl_source_lines_by_real_path
+{
+    my ($real_path) = @_;
+    return _get_perl_source_lines_by_file_id( _get_perl_file_id_by_real_path( $real_path ) );
+}
+
 sub _get_real_path_by_normalized_perl_file_id
 {
     my $perl_file_id = shift;
@@ -627,17 +692,37 @@ sub _get_real_path_by_perl_file_id
     return _get_real_path_by_normalized_perl_file_id( _get_normalized_perl_file_id( $perl_file_id ) );
 }
 
-sub _get_breakpoint_request_object
+sub _process_new_breakpoints
 {
-    my ($perl_file_id) = @_;
+    my ($json_data) = @_;
+    my $descriptors = _deserialize( $json_data );
 
-    my $normalized_file_id = _get_normalized_perl_file_id( $perl_file_id );
+    foreach my $descriptor (@$descriptors)
+    {
+        $descriptor->{line}++;
+        my ($path, $line) = @$descriptor{qw/path line/};
+        $_loaded_breakpoints{$path} //= { };
+        $_loaded_breakpoints{$path}->{$line} = $descriptor;
 
-    return {
-        id   => $normalized_file_id,
-        path => _get_real_path_by_normalized_perl_file_id( $normalized_file_id ),
-    };
+        if ((my $breakpoints_map = _get_perl_line_breakpoints_map_by_real_path( $path )) && (my $source_lines = _get_perl_source_lines_by_real_path( $path )))
+        {
+            my $event_data = {
+                path => $path,
+                line => $line - 1,
+            };
 
+            if ($source_lines->[$line] == 0)
+            {
+                _queue_event( "BREAKPOINT_DENIED", $event_data );
+            }
+            else
+            {
+                $breakpoints_map->{$line} = 1;
+                _queue_event( "BREAKPOINT_SET", $event_data );
+            }
+        }
+        # suppose is not loaded
+    }
 }
 
 sub _set_break_points_for_file
@@ -645,20 +730,6 @@ sub _set_break_points_for_file
     my ($file_id, $set_all) = @_;
 
     my @request = ();
-
-    if ($file_id && !$set_all)
-    {
-        push @request, _get_breakpoint_request_object( $file_id );
-    }
-    elsif ($set_all)
-    {
-        my $loaded_files_map = _get_loaded_files_map();
-        foreach my $perl_file_id (keys %{$loaded_files_map})
-        {
-            push @request, _get_breakpoint_request_object( $perl_file_id );
-        }
-
-    }
 
     print STDERR $frame_prefix."Requesting breakpoints for: "._serialize( \@request )."\n";
 }
@@ -873,6 +944,9 @@ sub load_handler
     my $old_internal_process = $_internal_process;
     $_internal_process = 1;
 
+    my $perl_file_id = $_[0];
+    my $real_path = _get_real_path_by_perl_file_id( $perl_file_id );
+
     if (!$old_internal_process)
     {
         print STDERR $frame_prefix."Set dbline from load handler\n" if $trace_set_db_line;
@@ -880,11 +954,10 @@ sub load_handler
         _update_frame_position();
     }
 
-    my $perl_file_id = $_[0];
 
     _report $frame_prefix."Loading module: %s => %s %s-%s-%s",
         $perl_file_id,
-        _get_real_path_by_perl_file_id( $perl_file_id ),
+        $real_path,
         $DB::trace // 'undef',
         $DB::signal // 'undef',
         $old_db_single // 'undef',
@@ -987,6 +1060,11 @@ require B::Deparse;
 require JSON::XS;
 
 $frame_prefix = $frame_prefix_step;
+
+_report "Waiting for breakpoints...";
+my $breakpoints_data = <$_debug_socket>;
+die "Connection closed" unless defined $breakpoints_data;
+_process_new_breakpoints( $breakpoints_data );
 
 _set_break_points_for_file( undef, 1 );
 
