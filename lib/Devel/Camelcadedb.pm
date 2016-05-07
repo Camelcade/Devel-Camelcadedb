@@ -130,6 +130,7 @@ my $_debug_socket;
 my $_debug_packed_address;
 
 my $coder;  # JSON::XS coder
+my $deparser; # B::Deparse deparser
 
 my $frame_prefix_step = "  ";
 my $frame_prefix = '';
@@ -141,16 +142,10 @@ my @saved;  # saved runtime environment
 my $current_package;
 my $current_file;
 my $current_line;
-my $current_sub;
-my $current_hasargs;
-my $current_wantarray;
-my $current_evaltext;
-my $current_is_require;
-my $current_hints;
-my $current_bitmask;
-my $current_hinthash;
 
 my $trace_set_db_line = 0; # report _set_dbline invocation
+my $trace_code_stack_and_frames = 1; # report traces on entering code
+my $trace_real_path = 0; # trasing real path transition
 
 my $_stack_frames = [ ];     # stack frames
 
@@ -165,6 +160,60 @@ sub _report($;@)
     my ($message, @sprintf_args) = @_;
     chomp $message;
     printf STDERR "$message\n", @sprintf_args;
+}
+
+sub _format_caller
+{
+    my (@caller) = @_;
+    return sprintf "%s %s%s%s from %s::, %s line %s; %s %s %s %s",
+        map $_ // 'undef',
+                defined $caller[5] ? $caller[5] ? 'array' : 'scalar' : 'void', # wantarray
+            $caller[3], # target sub
+                $caller[4] ? '(@_)' : '', # has args
+                $caller[7] ? ' [require '.$caller[6].']' : '', # is_require and evaltext
+            $caller[0], # package
+            $caller[1], # filename
+            $caller[2], # line
+                $caller[7] ? '' : $caller[6] // '', # evaltext if no isrequire
+            $caller[8], # strcit
+            $caller[9], # warnings
+            $caller[10], # hinthash
+    ;
+
+}
+
+sub _dump_stack
+{
+    my $depth = 0;
+    _report $frame_prefix."Stack trace:\n";
+    while()
+    {
+        my @caller = caller( $depth );
+        last unless defined $caller[2];
+        printf STDERR $frame_prefix.$frame_prefix_step."%s: %s\n", $depth++, _format_caller( @caller );
+    }
+    1;
+}
+
+sub _dump_frames
+{
+    my $depth = 0;
+    _report $frame_prefix."Frames trace:\n";
+    foreach my $frame (@$_stack_frames)
+    {
+        printf STDERR $frame_prefix.$frame_prefix_step."%s: %s\n", $depth++,
+            join ', ', map $_ // 'undef', @$frame{qw/subname file current_line _single/},
+                        $$frame{is_use_block} ? '(use block)' : ''
+        ;
+    }
+    1;
+}
+
+sub _deparse_code
+{
+    my ($code) = @_;
+    $deparser ||= B::Deparse->new();
+    return $deparser->coderef2text( $code );
 }
 
 sub _render_variables
@@ -220,6 +269,11 @@ sub _render_variables
     return $result;
 }
 
+sub _get_current_stack_frame
+{
+    return $_stack_frames->[0];
+}
+
 sub _send_to_debugger
 {
     my ($string) = @_;
@@ -240,7 +294,6 @@ sub _serialize
     my ($data) = @_;
     unless ($coder)
     {
-        require JSON::XS;
         $coder = JSON::XS->new();
         $coder->latin1();
     }
@@ -364,12 +417,27 @@ sub _event_handler
         }
         elsif ($command eq 'o') # over,
         {
-            $DB::single = STEP_OVER;
+            my $current_frame = _get_current_stack_frame;
+            if ($current_frame->{is_use_block})
+            {
+                $current_frame->{_single} = STEP_INTO;
+                $DB::single = STEP_CONTINUE;
+            }
+            else
+            {
+                $DB::single = STEP_OVER;
+            }
             return;
         }
         elsif ($command eq 'u') # step out
         {
+            my $current_frame = _get_current_stack_frame;
+            if ($current_frame->{is_use_block})
+            {
+                $current_frame->{_single} = STEP_CONTINUE;
+            }
             $DB::single = STEP_CONTINUE;
+
             return;
         }
         elsif ($command eq 't') # stack trace
@@ -398,41 +466,28 @@ sub _event_handler
 
 sub _set_dbline
 {
-    ($current_package,
-        $current_file,
-        $current_line,
-        $current_sub,
-        $current_hasargs,
-        $current_wantarray,
-        $current_evaltext,
-        $current_is_require,
-        $current_hints,
-        $current_bitmask,
-        $current_hinthash
-    ) = caller( 1 );
+    my @caller = caller( 1 );
 
-    print STDERR $frame_prefix.'Unknown caller' if !defined $current_line;
+    ($current_package, $current_file, $current_line) = @caller[0, 1, 2];
 
-    _report( <<'EOM',
-%sCaller: %s %s::%s%s in %s, %s, ev:%s; s:%s w:%s %s-%s-%s
+    if (defined $current_file)
+    {
+        _report( <<'EOM',
+%sCalling %s %s
 EOM
-        $frame_prefix,
-            defined $current_wantarray ? $current_wantarray ? 'array' : 'scalar' : 'void',
-        $current_package // 'undef',
-        $current_sub // 'undef',
-            $current_is_require ? '(require)' : '',
-        $current_file // 'undef',
-        $current_line // 'undef',
-        $current_evaltext // 'undef',
-        $current_hints // '', # strict
-        $current_bitmask // '', # warnings
-        $current_hasargs // 'undef',
-        $current_hinthash // 'undef',
-        ${^GLOBAL_PHASE} // 'unknown',
-    );
+            $frame_prefix,
+            _format_caller( @caller ),
+            ${^GLOBAL_PHASE} // 'unknown',
+        );
 
-    no strict 'refs';
-    *DB::dbline = *{"::_<$current_file"};
+        no strict 'refs';
+        *DB::dbline = *{"::_<$current_file"};
+    }
+    else
+    {
+        print STDERR $frame_prefix."CAN'T FIND CALLER;\n";
+        _dump_stack && _dump_frames;
+    }
 }
 
 sub _update_frame_position
@@ -444,24 +499,33 @@ sub _update_frame_position
     $_real_filenames{$current_file} //= _get_real_path( $current_file, $current_file );
 }
 
-sub _get_current_stack_frame
-{
-    return $_stack_frames->[0];
-}
-
 sub _enter_frame
 {
     my ($args_ref, $old_db_single) = @_;
     _update_frame_position();
 
-    _report $frame_prefix."Entering frame %s: %s%s %s-%s-%s",
+    my $is_use_block = 0;
+    my $deparsed_block = '';
+
+    if (ref $DB::sub)
+    {
+        $deparsed_block = _deparse_code( $DB::sub );
+        $is_use_block = $deparsed_block =~ /require\s+[\w\:]+\s*;\s*do/si;
+
+        _dump_stack && _dump_frames() if $trace_code_stack_and_frames;
+    }
+
+    _report $frame_prefix."Entering frame %s%s: %s%s %s-%s-%s%s",
         scalar @$_stack_frames + 1,
         $DB::sub,
+            $is_use_block ? '(use block)' : '',
             scalar @$args_ref ? '('.(join ', ', @$args_ref).')' : '()',
         $DB::trace // 'undef',
         $DB::signal // 'undef',
         $old_db_single // 'undef',
+            $deparsed_block ? "\n"."="x80 ."\n$deparsed_block\n"."="x80 : '',
     ;
+
     $frame_prefix = $frame_prefix_step x (scalar @$_stack_frames + 1);
 
     my $sub_file = '';
@@ -486,12 +550,14 @@ sub _enter_frame
     }
 
     my $new_stack_frame = {
-        subname      => $DB::sub,
-        args         => $args_ref,
-        file         => $sub_file,
-        current_line => $sub_line,
-        _single      => $old_db_single,
-        _dbline      => *DB::dbline
+        subname       => $DB::sub,
+        args          => $args_ref,
+        file          => $sub_file,
+        current_line  => $sub_line,
+        is_use_block  => $is_use_block,
+        deparsed_code => $deparsed_block,
+        _single       => $old_db_single,
+        _dbline       => *DB::dbline
     };
     unshift @$_stack_frames, $new_stack_frame;
     ($@, $!, $,, $/, $\, $^W) = @saved;
@@ -519,7 +585,7 @@ sub _get_real_path
 
     if ($path !~ m{^(/|\w\:)})
     {
-        print STDERR $frame_prefix."Detecting path for $path\n";
+        print STDERR $frame_prefix."Detecting path for $path\n" if $trace_real_path;
 
         my $current_dir = Cwd::getcwd();
 
@@ -529,7 +595,7 @@ sub _get_real_path
     {
         $real_path = $path;
     }
-    print STDERR $frame_prefix."  * $new_filename real path is $real_path\n";
+    print STDERR $frame_prefix."  * $new_filename real path is $real_path\n" if $trace_real_path;
     return $real_path;
 }
 
@@ -723,23 +789,25 @@ sub load_handler
         $_internal_process = 0;
     }
 
-    _report $frame_prefix."Loading module: %s %s-%s-%s",
-        $_[0],
-        $DB::trace // 'undef',
-        $DB::signal // 'undef',
-        $old_db_single // 'undef',
-    ;
-
     my $new_filename = $_[0];
     if ($new_filename =~ /_<(.+)$/)
     {
         my $path = $1;
         $_real_filenames{$path} = _get_real_path( $path, $new_filename );
+        $_real_filenames{$_[0]} = _get_real_path( $path, $new_filename );
     }
     else
     {
         die "Incorrect file: $new_filename";
     }
+
+    _report $frame_prefix."Loading module: %s => %s %s-%s-%s",
+        $_[0],
+        $_real_filenames{$_[0]} // '???',
+        $DB::trace // 'undef',
+        $DB::signal // 'undef',
+        $old_db_single // 'undef',
+    ;
 
     ($@, $!, $,, $/, $\, $^W) = @saved;
     $DB::single = $old_db_single;
@@ -760,15 +828,15 @@ sub goto_handler
     _update_frame_position();
 
     _report $frame_prefix."Goto called%s from %s:: %s line %s %s-%s-%s-%s",
-                scalar @_ ? ' with '.(join ',', @_) : '',
-            $current_package // 'undef',
-            $current_file // 'undef',
-            $current_line // 'undef',
-            $DB::trace // 'undef',
-            $DB::signal // 'undef',
-            $old_db_single // 'undef',
+            scalar @_ ? ' with '.(join ',', @_) : '',
+        $current_package // 'undef',
+        $current_file // 'undef',
+        $current_line // 'undef',
+        $DB::trace // 'undef',
+        $DB::signal // 'undef',
+        $old_db_single // 'undef',
         ${^GLOBAL_PHASE} // 'unknown',
-        ;
+    ;
     ($@, $!, $,, $/, $\, $^W) = @saved;
     $DB::single = $old_db_single;
     $_internal_process = 0;
@@ -818,17 +886,25 @@ push @$_stack_frames, {
         _dbline      => *DB::dbline,
     };
 
+_dump_stack && _dump_frames if $trace_code_stack_and_frames;
+
 *DB::DB = \&step_handler;
 *DB::sub = \&sub_handler;
 *DB::lsub = \&lsub_handler;
 *DB::postponed = \&load_handler;
 *DB::goto = \&goto_handler;
 
+$_internal_process = 1;
+
 require Cwd;
 Cwd::getcwd();
+require B::Deparse;
+require JSON::XS;
 
 $_real_filenames{$current_file} = _get_real_path( $current_file, $current_file );
 $frame_prefix = $frame_prefix_step;
+
+$_internal_process = 0;
 
 $DB::single = STEP_INTO;
 
