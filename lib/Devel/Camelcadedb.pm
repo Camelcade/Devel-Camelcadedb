@@ -117,7 +117,8 @@ our @args = ();       # arguments of current subroutine or @ARGV array
 our @ret = ();        # return value of last sub executed in list context
 our $ret = '';        # return value of last sub executed in scalar context
 
-my %_real_filenames = ();   # map of debugger path => real path detected on loading
+my %_perl_file_id_to_path_map = ();  # map of perl file ids without _<  => real path detected on loading
+my %_paths_to_perl_file_id_map = (); # maps real paths to _<filename
 
 my $_debug_server_host;     # remote debugger host
 my $_debug_server_port;     # remote debugger port
@@ -140,12 +141,14 @@ my $_internal_process = 0;
 my @saved;  # saved runtime environment
 
 my $current_package;
-my $current_file;
+my $current_file_id;
 my $current_line;
 
 my $trace_set_db_line = 0; # report _set_dbline invocation
-my $trace_code_stack_and_frames = 1; # report traces on entering code
+my $trace_code_stack_and_frames = 0; # report traces on entering code
 my $trace_real_path = 0; # trasing real path transition
+
+my $ready_to_go = 0; # set after debugger been initialized
 
 my $_stack_frames = [ ];     # stack frames
 
@@ -180,6 +183,20 @@ sub _format_caller
             $caller[10], # hinthash
     ;
 
+}
+
+sub _get_loaded_files_map
+{
+    my %result = ();
+    foreach(keys %::)
+    {
+        next unless /^_</;
+        next if /\(eval/;
+        my $glob = $::{$_};
+        next unless *$glob{ARRAY} && scalar @{*$glob{ARRAY}};
+        $result{$_} = ${*$glob};
+    }
+    return \%result;
 }
 
 sub _dump_stack
@@ -314,7 +331,7 @@ sub _get_stop_command
     {
         my $new_frame = {
             name => "$stack_frame->{subname}",
-            file => $_real_filenames{$stack_frame->{file}},
+            file => $_perl_file_id_to_path_map{$stack_frame->{file}},
             line => _get_adjusted_line_number( $stack_frame->{file}, $stack_frame->{current_line} ),
         };
 
@@ -322,7 +339,8 @@ sub _get_stop_command
 
         if (!defined $new_frame->{file})
         {
-            _report( "Couldn't find real filename for %s, %s", _dump( $stack_frame ), _dump( \%_real_filenames ) );
+            _report( "Couldn't find real filename for %s, %s", _dump( $stack_frame ),
+                _dump( \%_perl_file_id_to_path_map ) );
             $new_frame->{file} = $stack_frame->{file};
         }
 
@@ -374,7 +392,7 @@ sub _event_handler
         }
         elsif ($command eq 'f') # dump keys of %DB::dbline
         {
-            print STDERR _dump( \%_real_filenames );
+            print STDERR _dump( \%_perl_file_id_to_path_map );
         }
         elsif ($command eq 'g')
         {
@@ -387,7 +405,6 @@ sub _event_handler
         }
         elsif ($command eq 'b') # show breakpoints
         {
-            no strict 'refs';
             print _dump( \%DB::dbline );
         }
         elsif ($command =~ /^b (\d+)$/)
@@ -468,9 +485,9 @@ sub _set_dbline
 {
     my @caller = caller( 1 );
 
-    ($current_package, $current_file, $current_line) = @caller[0, 1, 2];
+    ($current_package, $current_file_id, $current_line) = @caller[0, 1, 2];
 
-    if (defined $current_file)
+    if (defined $current_file_id)
     {
         _report( <<'EOM',
 %sCalling %s %s
@@ -481,7 +498,7 @@ EOM
         );
 
         no strict 'refs';
-        *DB::dbline = *{"::_<$current_file"};
+        *DB::dbline = *{"::_<$current_file_id"};
     }
     else
     {
@@ -494,9 +511,8 @@ sub _update_frame_position
 {
     my $current_stack_frame = _get_current_stack_frame();
     $current_stack_frame->{current_line} = $current_line;
-    $current_stack_frame->{file} = $current_file;
+    $current_stack_frame->{file} = $current_file_id;
     $current_stack_frame->{lexical_vars} = peek_my( 2 );
-    $_real_filenames{$current_file} //= _get_real_path( $current_file, $current_file );
 }
 
 sub _enter_frame
@@ -517,8 +533,8 @@ sub _enter_frame
 
     _report $frame_prefix."Entering frame %s%s: %s%s %s-%s-%s%s",
         scalar @$_stack_frames + 1,
-        $DB::sub,
             $is_use_block ? '(use block)' : '',
+        $DB::sub,
             scalar @$args_ref ? '('.(join ', ', @$args_ref).')' : '()',
         $DB::trace // 'undef',
         $DB::signal // 'undef',
@@ -576,7 +592,78 @@ sub _exit_frame
     ($@, $!, $,, $/, $\, $^W) = @saved;
 }
 
-sub _get_real_path
+sub _get_normalized_perl_file_id
+{
+    my ($perl_file_id) = @_;
+    if ($perl_file_id =~ /_<(.+)$/)
+    {
+        return $1;
+    }
+    else
+    {
+        die "PANIC: Incorrect perl file id $perl_file_id";
+    }
+
+}
+
+sub _get_real_path_by_normalized_perl_file_id
+{
+    my $perl_file_id = shift;
+
+    if (!exists $_perl_file_id_to_path_map{$perl_file_id})
+    {
+        no strict 'refs';
+        my $real_path = _calc_real_path( ${*{"::_<$perl_file_id"}}, $perl_file_id );
+
+        $_perl_file_id_to_path_map{$perl_file_id} = $real_path;
+        $_paths_to_perl_file_id_map{$real_path} = $perl_file_id;
+    }
+    return $_perl_file_id_to_path_map{$perl_file_id};
+}
+
+sub _get_real_path_by_perl_file_id
+{
+    my ($perl_file_id) = @_;
+    return _get_real_path_by_normalized_perl_file_id( _get_normalized_perl_file_id( $perl_file_id ) );
+}
+
+sub _get_breakpoint_request_object
+{
+    my ($perl_file_id) = @_;
+
+    my $normalized_file_id = _get_normalized_perl_file_id( $perl_file_id );
+
+    return {
+        id   => $normalized_file_id,
+        path => _get_real_path_by_normalized_perl_file_id( $normalized_file_id ),
+    };
+
+}
+
+sub _set_break_points_for_file
+{
+    my ($file_id, $set_all) = @_;
+
+    my @request = ();
+
+    if ($file_id && !$set_all)
+    {
+        push @request, _get_breakpoint_request_object( $file_id );
+    }
+    elsif ($set_all)
+    {
+        my $loaded_files_map = _get_loaded_files_map();
+        foreach my $perl_file_id (keys %{$loaded_files_map})
+        {
+            push @request, _get_breakpoint_request_object( $perl_file_id );
+        }
+
+    }
+
+    print STDERR $frame_prefix."Requesting breakpoints for: "._serialize( \@request )."\n";
+}
+
+sub _calc_real_path
 {
     my $path = shift;
     my $new_filename = shift;
@@ -595,6 +682,7 @@ sub _get_real_path
     {
         $real_path = $path;
     }
+    $real_path =~ s{\\}{/}g;
     print STDERR $frame_prefix."  * $new_filename real path is $real_path\n" if $trace_real_path;
     return $real_path;
 }
@@ -652,7 +740,9 @@ sub sub_handler
 
         if ($current_package && $current_package eq 'DB')
         {
-            printf STDERR "    * Second frame for %s is %s\n", $DB::sub, join ', ', map $_ // 'undef', caller( 1 );
+            _report "PANIC: Catched internal call";
+            _dump_stack && _dump_frames();
+            die;
         }
 
         $DB::single = $old_db_single;
@@ -780,34 +870,29 @@ sub load_handler
     $DB::single = STEP_CONTINUE;
     @saved = ($@, $!, $,, $/, $\, $^W);
 
-    if (!$_internal_process)
+    my $old_internal_process = $_internal_process;
+    $_internal_process = 1;
+
+    if (!$old_internal_process)
     {
-        $_internal_process = 1;
         print STDERR $frame_prefix."Set dbline from load handler\n" if $trace_set_db_line;
         _set_dbline();
         _update_frame_position();
-        $_internal_process = 0;
     }
 
-    my $new_filename = $_[0];
-    if ($new_filename =~ /_<(.+)$/)
-    {
-        my $path = $1;
-        $_real_filenames{$path} = _get_real_path( $path, $new_filename );
-        $_real_filenames{$_[0]} = _get_real_path( $path, $new_filename );
-    }
-    else
-    {
-        die "Incorrect file: $new_filename";
-    }
+    my $perl_file_id = $_[0];
 
     _report $frame_prefix."Loading module: %s => %s %s-%s-%s",
-        $_[0],
-        $_real_filenames{$_[0]} // '???',
+        $perl_file_id,
+        _get_real_path_by_perl_file_id( $perl_file_id ),
         $DB::trace // 'undef',
         $DB::signal // 'undef',
         $old_db_single // 'undef',
     ;
+
+    _set_break_points_for_file( $perl_file_id ) if $ready_to_go;
+
+    $_internal_process = $old_internal_process;
 
     ($@, $!, $,, $/, $\, $^W) = @saved;
     $DB::single = $old_db_single;
@@ -830,7 +915,7 @@ sub goto_handler
     _report $frame_prefix."Goto called%s from %s:: %s line %s %s-%s-%s-%s",
             scalar @_ ? ' with '.(join ',', @_) : '',
         $current_package // 'undef',
-        $current_file // 'undef',
+        $current_file_id // 'undef',
         $current_line // 'undef',
         $DB::trace // 'undef',
         $DB::signal // 'undef',
@@ -880,7 +965,7 @@ _set_dbline();
 push @$_stack_frames, {
         subname      => 'SCRIPT',
         args         => [ @ARGV ],
-        file         => $current_file,
+        file         => $current_file_id,
         current_line => $current_line,
         _single      => STEP_INTO,
         _dbline      => *DB::dbline,
@@ -901,10 +986,12 @@ Cwd::getcwd();
 require B::Deparse;
 require JSON::XS;
 
-$_real_filenames{$current_file} = _get_real_path( $current_file, $current_file );
 $frame_prefix = $frame_prefix_step;
 
+_set_break_points_for_file( undef, 1 );
+
 $_internal_process = 0;
+$ready_to_go = 1;
 
 $DB::single = STEP_INTO;
 
