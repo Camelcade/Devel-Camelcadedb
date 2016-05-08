@@ -3,8 +3,21 @@ use strict;
 use warnings FATAL => 'all';
 use LWP::UserAgent;
 
-my $scalar = 123;
+format SOMEFORMAT =
+This is format
+.
+
 my $deep_object = \\\\\\\LWP::UserAgent->new();
+my $regexp = qr/something/;
+my $scalar = 123;
+my $ua = LWP::UserAgent->new();
+my %hash = (
+    test    => 69,
+    scref   => \$scalar,
+    cref    => sub {print "blah!";},
+    browser => LWP::UserAgent->new(),
+    regex   => qr/somethingelse/,
+);
 my @array = (
     {
         string     => 'is',
@@ -18,20 +31,11 @@ my @array = (
         glob       => *::,
         regex      => qr/some/,
         handle     => *STDOUT,
+        format     => *SOMEFORMAT
     },
     1,
     5,
     6,
-);
-my $ua = LWP::UserAgent->new();
-my $regexp = qr/something/;
-my %hash = (
-    test    => 69,
-    scref   => \$scalar,
-    aref    => \@array,
-    cref    => sub {print "blah!";},
-    browser => LWP::UserAgent->new(),
-    regex   => qr/somethingelse/,
 );
 
 use Testmod;

@@ -124,6 +124,8 @@ my %_paths_to_perl_file_id_map = (); # maps real paths to _<filename
 my %_loaded_breakpoints = (); # map of loaded breakpoints, set and not in form: path => line => object
 my %_references_cache = ();   # cache of soft references from peek_my
 
+my @glob_slots = qw/SCALAR ARRAY HASH CODE IO FORMAT/;
+
 my $_debug_server_host;     # remote debugger host
 my $_debug_server_port;     # remote debugger port
 
@@ -262,7 +264,7 @@ sub _get_reference_subelements
 
             for (my $item_number = $offset; $item_number < $last_index && $item_number < @$source_data; $item_number++)
             {
-                push @$data, _get_reference_descriptor( "[$item_number]", $source_data->[$item_number] );
+                push @$data, _get_reference_descriptor( "[$item_number]", \$source_data->[$item_number] );
             }
         }
         elsif ($reftype eq 'HASH')
@@ -275,19 +277,28 @@ sub _get_reference_subelements
                 for (my $item_number = $offset; $item_number < $last_index && $item_number < @keys; $item_number++)
                 {
                     my $hash_key = $keys[$item_number];
-                    push @$data, _get_reference_descriptor( "'$hash_key'", $source_data->{$hash_key} );
+                    push @$data, _get_reference_descriptor( "'$hash_key'", \$source_data->{$hash_key} );
                 }
             }
         }
         elsif ($reftype eq 'REF')
         {
-            push @$data, _get_reference_descriptor( $source_data, $$source_data );
+            push @$data, _get_reference_descriptor( $source_data, \$$source_data );
+        }
+        elsif ($reftype eq 'GLOB')
+        {
+            no strict 'refs';
+            push @$data, map _get_reference_descriptor( $_, \*$source_data{$_} ), grep *$source_data{$_}, @glob_slots;
         }
         else
         {
             print STDERR "Dont know how to iterate $reftype";
         }
 
+    }
+    else
+    {
+        print STDERR "No source data for $key\n";
     }
 
     _send_data_to_debugger( $data );
@@ -298,7 +309,7 @@ sub _format_variables
     my ($vars_hash) = @_;
     my $result = [ ];
 
-    foreach my $variable (keys %$vars_hash)
+    foreach my $variable (sort keys %$vars_hash)
     {
         my $value = $vars_hash->{$variable};
         push @$result, _get_reference_descriptor( $variable, $value );
@@ -346,6 +357,13 @@ sub _get_reference_descriptor
     {
         $size = scalar keys %$value;
         $value = sprintf "HASH{%s}", $size;
+        $expandable = $size ? \1 : \0;
+    }
+    elsif ($reftype eq 'GLOB')
+    {
+        no strict 'refs';
+        $size = scalar grep *$value{$_}, @glob_slots;
+        $value = "*".*$value{PACKAGE}."::".*$value{NAME};
         $expandable = $size ? \1 : \0;
     }
 
