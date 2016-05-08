@@ -120,8 +120,6 @@ our $ret = '';        # return value of last sub executed in scalar context
 my %_perl_file_id_to_path_map = ();  # map of perl file ids without _<  => real path detected on loading
 my %_paths_to_perl_file_id_map = (); # maps real paths to _<filename
 
-my @_events_queue = ();     # queue for events, need to be sent to the IDEA
-
 my %_loaded_breakpoints = (); # map of loaded breakpoints, set and not in form: path => line => object
 
 my $_debug_server_host;     # remote debugger host
@@ -188,14 +186,14 @@ sub _format_caller
     ;
 }
 
-sub _queue_event
+sub _send_event
 {
     my ($name, $data) = @_;
 
-    push @_events_queue, {
+    _send_event_to_debugger( +{
             event => $name,
             data  => $data
-        };
+        } );
 }
 
 sub _get_loaded_files_map
@@ -380,15 +378,10 @@ sub _get_stop_event_data
 
 sub _event_handler
 {
-    _queue_event( "STOP", _get_stop_event_data() );
+    _send_event( "STOP", _get_stop_event_data() );
 
     while()
     {
-        while( scalar @_events_queue )
-        {
-            _send_event_to_debugger( shift @_events_queue );
-        }
-
         my $command = <$_debug_socket>;
         die 'Debugging socket disconnected' if !defined $command;
         $command =~ s/[\r\n]+$//;
@@ -652,6 +645,13 @@ sub _get_perl_file_id_by_real_path
 sub _get_perl_line_breakpoints_map_by_file_id
 {
     my ($file_id) = @_;
+
+    unless (defined $file_id)
+    {
+        _dump_stack && _dump_frames;
+        die "Unitialized file id";
+    }
+
     my $glob = $::{"_<$file_id"};
     return $glob ? *$glob{HASH} : undef;
 }
@@ -659,7 +659,8 @@ sub _get_perl_line_breakpoints_map_by_file_id
 sub _get_perl_line_breakpoints_map_by_real_path
 {
     my ($real_path) = @_;
-    return _get_perl_line_breakpoints_map_by_file_id( _get_perl_file_id_by_real_path( $real_path ) );
+    my $perl_file_id = _get_perl_file_id_by_real_path( $real_path );
+    return $perl_file_id ? _get_perl_line_breakpoints_map_by_file_id( $perl_file_id ) : undef;
 }
 
 sub _get_perl_source_lines_by_file_id
@@ -721,12 +722,12 @@ sub _set_breakpoint
 
     if ($source_lines->[$line] == 0)
     {
-        _queue_event( "BREAKPOINT_DENIED", $event_data );
+        _send_event( "BREAKPOINT_DENIED", $event_data );
     }
     else
     {
         $breakpoints_map->{$line} = 1;
-        _queue_event( "BREAKPOINT_SET", $event_data );
+        _send_event( "BREAKPOINT_SET", $event_data );
     }
 }
 
@@ -738,6 +739,9 @@ sub _process_new_breakpoints
     foreach my $descriptor (@$descriptors)
     {
         $descriptor->{line}++;
+
+        _report( $frame_prefix."Processing descriptor: %s %s", $descriptor->{path}, $descriptor->{line} );
+
         my ($path, $line) = @$descriptor{qw/path line/};
 
         if ($descriptor->{remove}) # removing from loaded and set
@@ -1110,9 +1114,11 @@ require JSON::XS;
 
 $frame_prefix = $frame_prefix_step;
 
+_send_event( "READY");
 _report "Waiting for breakpoints...";
 my $breakpoints_data = <$_debug_socket>;
 die "Connection closed" unless defined $breakpoints_data;
+
 if ($breakpoints_data =~ /^b (.+)$/s)
 {
     _process_new_breakpoints( $1 );
