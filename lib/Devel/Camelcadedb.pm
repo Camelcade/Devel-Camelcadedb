@@ -351,6 +351,11 @@ sub _get_stop_event_data
 
     foreach my $stack_frame (@{$_stack_frames})
     {
+        unless ($stack_frame->{file})
+        {
+            _dump_stack && _dump_frames && die "Stack frames file id is not defined";
+        }
+
         my $new_frame = {
             name => "$stack_frame->{subname}",
             file => _get_real_path_by_normalized_perl_file_id( $stack_frame->{file} ),
@@ -531,8 +536,7 @@ EOM
     }
     else
     {
-        print STDERR $frame_prefix."CAN'T FIND CALLER;\n";
-        _dump_stack && _dump_frames;
+        _dump_stack && _dump_frames && die "CAN'T FIND CALLER;\n";
     }
 }
 
@@ -680,7 +684,10 @@ sub _get_real_path_by_normalized_perl_file_id
 {
     my $perl_file_id = shift;
 
-    #_dump_stack && die "Perl file id undefined" unless $perl_file_id;
+    unless ($perl_file_id)
+    {
+        _dump_stack && _dump_frames && die "Perl normalized file id undefined";
+    }
 
     if (!exists $_perl_file_id_to_path_map{$perl_file_id})
     {
@@ -859,7 +866,8 @@ sub sub_handler
 
         $DB::single = STEP_CONTINUE;
 
-        print STDERR $frame_prefix."Set dbline from sub handler $DB::sub\n" if $trace_set_db_line;
+        printf STDERR $frame_prefix."Set dbline from sub handler $DB::sub, %s\n",
+            join ',', map $_ // 'undef', caller if $trace_set_db_line;
         _set_dbline();
         $stack_frame = _enter_frame( [ @_ ], $old_db_single );
 
@@ -1086,8 +1094,8 @@ else
 $_debug_socket->autoflush( 1 );
 
 print STDERR $frame_prefix."Set dbline from main\n" if $trace_set_db_line;
-_set_dbline();
 
+_set_dbline();
 push @$_stack_frames, {
         subname      => 'SCRIPT',
         args         => [ @ARGV ],
@@ -1114,7 +1122,7 @@ require JSON::XS;
 
 $frame_prefix = $frame_prefix_step;
 
-_send_event( "READY");
+_send_event( "READY" );
 _report "Waiting for breakpoints...";
 my $breakpoints_data = <$_debug_socket>;
 die "Connection closed" unless defined $breakpoints_data;
