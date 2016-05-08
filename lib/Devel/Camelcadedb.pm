@@ -435,11 +435,11 @@ sub _event_handler
             $DB::single = STEP_CONTINUE;
             return;
         }
-        elsif ($command eq 'b') # show breakpoints
+        elsif ($command eq 'b') # show breakpoints, manual
         {
             print _dump( \%DB::dbline );
         }
-        elsif ($command =~ /^b (\d+)$/)
+        elsif ($command =~ /^b (\d+)$/) # set breakpoints, manual
         {
             my $line = $1;
             if ($DB::dbline[$line] == 0)
@@ -459,6 +459,10 @@ sub _event_handler
                     print STDERR "Added breakpoint to line $line\n";
                 }
             }
+        }
+        elsif ($command =~ /^b (.+)$/) # set breakpoints from proto
+        {
+            _process_new_breakpoints( $1 );
         }
         elsif ($command eq 'v') # show variables
         {
@@ -675,6 +679,8 @@ sub _get_real_path_by_normalized_perl_file_id
 {
     my $perl_file_id = shift;
 
+    #_dump_stack && die "Perl file id undefined" unless $perl_file_id;
+
     if (!exists $_perl_file_id_to_path_map{$perl_file_id})
     {
         no strict 'refs';
@@ -733,12 +739,28 @@ sub _process_new_breakpoints
     {
         $descriptor->{line}++;
         my ($path, $line) = @$descriptor{qw/path line/};
-        $_loaded_breakpoints{$path} //= { };
-        $_loaded_breakpoints{$path}->{$line} = $descriptor;
 
-        if ((my $breakpoints_map = _get_perl_line_breakpoints_map_by_real_path( $path )) && (my $source_lines = _get_perl_source_lines_by_real_path( $path )))
+        if ($descriptor->{remove}) # removing from loaded and set
         {
-            _set_breakpoint( $path, $line, $source_lines, $breakpoints_map );
+            if (exists $_loaded_breakpoints{$path} && exists $_loaded_breakpoints{$path}->{$line})
+            {
+                delete $_loaded_breakpoints{$path}->{$line};
+            }
+
+            if (my $breakpoints_map = _get_perl_line_breakpoints_map_by_real_path( $path ))
+            {
+                $breakpoints_map->{$line} = 0;
+            }
+        }
+        else # add to loaded and set
+        {
+            $_loaded_breakpoints{$path} //= { };
+            $_loaded_breakpoints{$path}->{$line} = $descriptor;
+
+            if ((my $breakpoints_map = _get_perl_line_breakpoints_map_by_real_path( $path )) && (my $source_lines = _get_perl_source_lines_by_real_path( $path )))
+            {
+                _set_breakpoint( $path, $line, $source_lines, $breakpoints_map );
+            }
         }
         # suppose is not loaded
     }
@@ -1091,12 +1113,19 @@ $frame_prefix = $frame_prefix_step;
 _report "Waiting for breakpoints...";
 my $breakpoints_data = <$_debug_socket>;
 die "Connection closed" unless defined $breakpoints_data;
-_process_new_breakpoints( $breakpoints_data );
+if ($breakpoints_data =~ /^b (.+)$/s)
+{
+    _process_new_breakpoints( $1 );
+}
+else
+{
+    _report( "Incorrect breakpoints data: %s", $breakpoints_data );
+}
 
 $_internal_process = 0;
 $ready_to_go = 1;
 
-$DB::single = STEP_INTO;
+$DB::single = STEP_CONTINUE;
 
 #$DB::single = STEP_CONTINUE;
 
