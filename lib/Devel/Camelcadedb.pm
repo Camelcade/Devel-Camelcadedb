@@ -8,6 +8,7 @@ use strict;
 use warnings;
 use IO::Socket::INET;
 use PadWalker qw/peek_my/;
+use Scalar::Util;
 #use constant {
 #    FLAG_SUB_ENTER_EXIT         => 0x01,
 #    FLAG_LINE_BY_LINE           => 0x02,
@@ -121,6 +122,7 @@ my %_perl_file_id_to_path_map = ();  # map of perl file ids without _<  => real 
 my %_paths_to_perl_file_id_map = (); # maps real paths to _<filename
 
 my %_loaded_breakpoints = (); # map of loaded breakpoints, set and not in form: path => line => object
+my %_references_cache = ();   # cache of soft references from peek_my
 
 my $_debug_server_host;     # remote debugger host
 my $_debug_server_port;     # remote debugger port
@@ -190,7 +192,7 @@ sub _send_event
 {
     my ($name, $data) = @_;
 
-    _send_event_to_debugger( +{
+    _send_data_to_debugger( +{
             event => $name,
             data  => $data
         } );
@@ -242,6 +244,127 @@ sub _deparse_code
     my ($code) = @_;
     $deparser ||= B::Deparse->new();
     return $deparser->coderef2text( $code );
+}
+
+sub _get_reference_subelements
+{
+    my ($offset, $size, $key) = @_;
+    my $data = [ ];
+
+    my $source_data = $_references_cache{$key};
+    if ($source_data)
+    {
+        my $reftype = Scalar::Util::reftype( $source_data );
+
+        if ($reftype eq 'ARRAY' && $#$source_data >= $offset)
+        {
+            my $last_index = $offset + $size;
+
+            for (my $item_number = $offset; $item_number < $last_index && $item_number < @$source_data; $item_number++)
+            {
+                push @$data, _get_reference_descriptor( "[$item_number]", $source_data->[$item_number] );
+            }
+        }
+        elsif ($reftype eq 'HASH')
+        {
+            my @keys = sort keys %$source_data;
+            if ($#keys >= $offset)
+            {
+                my $last_index = $offset + $size;
+
+                for (my $item_number = $offset; $item_number < $last_index && $item_number < @keys; $item_number++)
+                {
+                    my $hash_key = $keys[$item_number];
+                    push @$data, _get_reference_descriptor( "'$hash_key'", $source_data->{$hash_key} );
+                }
+            }
+        }
+        elsif ($reftype eq 'REF')
+        {
+            push @$data, _get_reference_descriptor( $source_data, $$source_data );
+        }
+        else
+        {
+            print STDERR "Dont know how to iterate $reftype";
+        }
+
+    }
+
+    _send_data_to_debugger( $data );
+}
+
+sub _format_variables
+{
+    my ($vars_hash) = @_;
+    my $result = [ ];
+
+    foreach my $variable (keys %$vars_hash)
+    {
+        my $value = $vars_hash->{$variable};
+        push @$result, _get_reference_descriptor( $variable, $value );
+    }
+
+    return $result;
+}
+
+sub _get_reference_descriptor
+{
+    my ($name, $value) = @_;
+
+    my $key = $value;
+    my $reftype = Scalar::Util::reftype( $value );
+    my $ref = ref $value;
+
+    my $size = 0;
+    my $type = $ref;
+    my $expandable = \0;
+    my $is_blessed = $ref && Scalar::Util::blessed( $value ) ? \1 : \0;
+    my $ref_depth = 0;
+
+    if (!$reftype)
+    {
+        $type = "SCALAR";
+    }
+    elsif ($reftype eq 'SCALAR')
+    {
+        $value = $$value // 'undef';
+        $expandable = ref $value ? \1 : \0;
+    }
+    elsif ($reftype eq 'REF')
+    {
+        my $result = _get_reference_descriptor( $name, $$value );
+        $result->{ref_depth}++;
+        return $result;
+    }
+    elsif ($reftype eq 'ARRAY')
+    {
+        $size = scalar @$value;
+        $value = sprintf "ARRAY[%s]", $size;
+        $expandable = $size ? \1 : \0;
+    }
+    elsif ($reftype eq 'HASH')
+    {
+        $size = scalar keys %$value;
+        $value = sprintf "HASH{%s}", $size;
+        $expandable = $size ? \1 : \0;
+    }
+
+    if ($reftype)
+    {
+        $_references_cache{$key} = $key;
+        Scalar::Util::weaken( $_references_cache{$key} );
+    }
+
+    return +{
+        name       => "$name",
+        value      => "$value",
+        type       => "$type",
+        expandable => $expandable,
+        key        => "$key",
+        size       => $size,
+        blessed    => $is_blessed,
+        ref_depth  => $ref_depth,
+    };
 }
 
 sub _render_variables
@@ -302,7 +425,7 @@ sub _get_current_stack_frame
     return $_stack_frames->[0];
 }
 
-sub _send_event_to_debugger
+sub _send_data_to_debugger
 {
     my ($event) = @_;
     _send_string_to_debugger( _serialize( $event ) );
@@ -345,37 +468,41 @@ sub _deserialize
     return _get_seraizlier->decode( $json_string );
 }
 
-sub _get_stop_event_data
+sub _calc_stack_frames
 {
     my $frames = [ ];
+    my $depth = 0;
 
-    foreach my $stack_frame (@{$_stack_frames})
+    while ()
     {
-        unless ($stack_frame->{file})
+        my ($package, $filename, $line, $subroutine, $hasargs,
+            $wantarray, $evaltext, $is_require, $hints, $bitmask, $hinthash) = caller( $depth );
+
+        last unless defined $filename;
+
+        if ($package && $package ne 'DB')
         {
-            _dump_stack && _dump_frames && die "Stack frames file id is not defined";
+            if (@$frames)
+            {
+                $frames->[-1]->{name} = $subroutine;
+            }
+
+            my $lexical_variables = [ ];
+            my $variables_hash = eval {peek_my( $depth + 2 )};
+            unless ($@)
+            {
+                $lexical_variables = _format_variables( $variables_hash );
+            }
+
+            push @$frames, {
+                    file     => _get_real_path_by_normalized_perl_file_id( $filename ),
+                    line     => $line - 1,
+                    name     => 'main::',
+                    lexicals => $lexical_variables
+                };
         }
 
-        my $new_frame = {
-            name => "$stack_frame->{subname}",
-            file => _get_real_path_by_normalized_perl_file_id( $stack_frame->{file} ),
-            line => _get_adjusted_line_number( $stack_frame->{current_line} ),
-        };
-
-        # fixme handle Step at main:: (eval 25)[C:\Repository\IDEA-Perl5-Debugger\testscript.pl:40] line 2 with , 0-0-2, depth 1
-
-        if (!defined $new_frame->{file})
-        {
-            _report( "PANIC: Couldn't find real filename for %s, %s",
-                _dump( $stack_frame ),
-                _dump( \%_perl_file_id_to_path_map ) );
-            die;
-            #$new_frame->{file} = $stack_frame->{file};
-        }
-
-        $new_frame->{file} =~ s{\\}{/};
-
-        push @$frames, $new_frame;
+        $depth++;
     }
 
     return $frames;
@@ -383,7 +510,7 @@ sub _get_stop_event_data
 
 sub _event_handler
 {
-    _send_event( "STOP", _get_stop_event_data() );
+    _send_event( "STOP", _calc_stack_frames() );
 
     while()
     {
@@ -480,6 +607,10 @@ sub _event_handler
             }
             return;
         }
+        elsif ($command =~ /^getchildren (\d+) (\d+) (.+)$/) # expand,
+        {
+            _get_reference_subelements( $1, $2, $3 );
+        }
         elsif ($command eq 'u') # step out
         {
             my $current_frame = _get_current_stack_frame;
@@ -536,7 +667,7 @@ EOM
     }
     else
     {
-        _dump_stack && _dump_frames && die "CAN'T FIND CALLER;\n";
+        _dump_stack && _dump_frames && warn "CAN'T FIND CALLER;\n";
     }
 }
 
@@ -831,6 +962,8 @@ sub step_handler
     my $old_db_single = $DB::single;
     $DB::single = STEP_CONTINUE;
     @saved = ($@, $!, $,, $/, $\, $^W);
+
+    printf STDERR "WE ARE IN %s", $DB::sub // 'unknown sub';
 
     print STDERR $frame_prefix."Set dbline from step handler\n" if $trace_set_db_line;
     _set_dbline();

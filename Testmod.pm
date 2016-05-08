@@ -1,9 +1,10 @@
-sub something {
+sub somethingTestmod {
     print "here is something";
+    my $ua = LWP::UserAgent->new();
 }
 
 print "bom";
-
+my $ua = LWP::UserAgent->new();
 
 BEGIN {
 

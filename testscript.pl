@@ -4,7 +4,25 @@ use warnings FATAL => 'all';
 use LWP::UserAgent;
 
 my $scalar = 123;
-my @array = (1, 2, 3, 5, 6);
+my $deep_object = \\\\\\\LWP::UserAgent->new();
+my @array = (
+    {
+        string     => 'is',
+        string_ref => \'is',
+        number     => 42,
+        number_ref => \42,
+        sub        => sub {print 'hi'},
+        array_ref  => [ 8, 9, 10, 11 ],
+        hash_ref   => { peek => 'me' },
+        object     => LWP::UserAgent->new(),
+        glob       => *::,
+        regex      => qr/some/,
+        handle     => *STDOUT,
+    },
+    1,
+    5,
+    6,
+);
 my $ua = LWP::UserAgent->new();
 my $regexp = qr/something/;
 my %hash = (
@@ -32,6 +50,7 @@ sub mysub2
 }
 
 mysub();
+somethingTestmod();
 
 eval {
     print "Eval is here\n";
