@@ -54,12 +54,21 @@ use Submod::Testmod;
 sub mysub
 {
     print 42 ."\n";
+    my $something = 123;
+    my $otherone = 5;
+
+    $something++;
+    $otherone += $something;
+
+    $something = 'Hi there';
+    $something .= $otherone;
+
     goto & mysub2;
 }
 
 sub mysub2
 {
-    my $ua = LWP::UserAgent->new();
+    $ua = LWP::UserAgent->new();
     print 69 ."\n";
 }
 

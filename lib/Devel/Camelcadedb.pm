@@ -47,8 +47,6 @@ sub STEP_CONTINUE() {0;}
 sub STEP_INTO() {1;}
 sub STEP_OVER() {2;}
 
-
-
 # Each array @{"::_<$filename"} holds the lines of $filename for a file compiled by Perl. The same is also true for evaled
 # strings that contain subroutines, or which are currently being executed. The $filename for evaled strings looks like
 # (eval 34) .
@@ -565,7 +563,7 @@ sub _calc_stack_frames
             }
 
             my $lexical_variables = [ ];
-            my $variables_hash = eval {peek_my( $depth + 2 )};
+            my $variables_hash = eval {peek_my( $depth + 1 )};
             unless ($@)
             {
                 $lexical_variables = _format_variables( $variables_hash );
