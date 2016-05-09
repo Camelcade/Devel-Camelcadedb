@@ -373,6 +373,19 @@ sub _get_reference_descriptor
         Scalar::Util::weaken( $_references_cache{$key} );
     }
 
+    $name = "$name";
+    $value = "$value";
+
+    my $code;
+    $name =~ s{(.)}{
+        $code = ord( $1 );
+        $code < 32 ? '^'.chr( $code + 0x40 ) : $1
+        }gsex;
+    $value =~ s{(.)}{
+        $code = ord( $1 );
+        $code < 32 ? '^'.chr( $code + 0x40 ) : $1
+        }gsex;
+
     return +{
         name       => "$name",
         value      => "$value",
