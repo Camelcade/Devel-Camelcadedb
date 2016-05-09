@@ -127,13 +127,6 @@ my $glob_slots = join '|', @glob_slots;
 
 my $_dev_mode = 0;          # enable this to get verbose STDERR output from process
 
-my $_debug_server_host;     # remote debugger host
-my $_debug_server_port;     # remote debugger port
-
-my $_local_debug_host;      # local debug host
-my $_local_debug_port;      # local debug port
-
-my $_debug_net_role;        # server or client, we'll use ENV for this
 my $_debug_socket;
 my $_debug_packed_address;
 
@@ -1229,36 +1222,52 @@ sub goto_handler
 }
 
 
-$_local_debug_host = 'localhost';
-$_local_debug_port = 12345;
-$_debug_net_role = 'server';
-
 $^P |= FLAG_REPORT_GOTO;
 
-# http://perldoc.perl.org/perlipc.html#Sockets%3a-Client%2fServer-Communication
-if ($_debug_net_role eq 'server')
+unless ($ENV{PERL5_DEBUG_ROLE} && $ENV{PERL5_DEBUG_HOST} && $ENV{PERL5_DEBUG_PORT})
 {
-    _report "Listening for the debugger at %s:%s...", $_local_debug_host, $_local_debug_port;
+    print STDERR <<'EOM';
+Can't start debugging session. In order to make it work, you should set up environment variables:
+
+PERL5_DEBUG_ROLE - set this to 'server' if you want to make Perl process act as a server, and to 'client' to make it connect to IDEA.
+PERL5_DEBUG_HOST - host to bind or connect, depending on role.
+PERL5_DEBUG_PORT - host to listen or connect, depending on role.
+EOM
+
+    exit;
+}
+
+# http://perldoc.perl.org/perlipc.html#Sockets%3a-Client%2fServer-Communication
+if ($ENV{PERL5_DEBUG_ROLE} eq 'server')
+{
+    printf STDERR "Listening for the IDE connection at %s:%s...\n", $ENV{PERL5_DEBUG_HOST}, $ENV{PERL5_DEBUG_PORT};
     my $_server_socket = IO::Socket::INET->new(
         Listen    => 1,
-        LocalAddr => $_local_debug_host,
-        LocalPort => $_local_debug_port,
+        LocalAddr => $ENV{PERL5_DEBUG_HOST},
+        LocalPort => $ENV{PERL5_DEBUG_PORT},
         ReuseAddr => 1,
         Proto     => 'tcp',
-    ) || die "Error binding to $_local_debug_host:$_local_debug_port";
+    ) || die "Error binding to $ENV{PERL5_DEBUG_HOST}:$ENV{PERL5_DEBUG_PORT}";
     $_debug_packed_address = accept( $_debug_socket, $_server_socket );
 }
 else
 {
-    _report "Connecting to the debugger at %s:%s...", $_debug_server_host, $_debug_server_port;
-    $_debug_socket = IO::Socket::INET->new(
-        PeerAddr  => $_debug_server_host,
-        LocalPort => $_debug_server_port,
-        ReuseAddr => 1,
-        Proto     => 'tcp',
-    ) || die "Error connecting to $_debug_server_host:$_debug_server_port";
+    foreach my $attempt (1 .. 10)
+    {
+        printf STDERR "($attempt)Connecting to the IDE at %s:%s...\n", $ENV{PERL5_DEBUG_HOST}, $ENV{PERL5_DEBUG_PORT};
+        $_debug_socket = IO::Socket::INET->new(
+            PeerAddr  => $ENV{PERL5_DEBUG_HOST},
+            PeerPort  => $ENV{PERL5_DEBUG_PORT},
+            ReuseAddr => 1,
+            Proto     => 'tcp',
+        );
+        last if $_debug_socket;
+        sleep( 1 ); # this is kinda hacky
+    }
+    die "Error connecting to $ENV{PERL5_DEBUG_HOST}:$ENV{PERL5_DEBUG_PORT}" unless $_debug_socket;
 }
 $_debug_socket->autoflush( 1 );
+print STDERR "Connected.\n";
 
 _report "Set dbline from main\n" if $trace_set_db_line;
 
