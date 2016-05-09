@@ -250,10 +250,23 @@ sub _deparse_code
 
 sub _get_reference_subelements
 {
-    my ($offset, $size, $key) = @_;
+    my ($request_serialized_object) = @_;
+    my $request_object = _deserialize( $request_serialized_object );
+    my ($offset, $size, $key) = @$request_object{qw/offset limit key/};
     my $data = [ ];
 
-    my $source_data = $_references_cache{$key};
+    my $source_data;
+
+    if ($key =~ s/^\*//) # hack for globs
+    {
+        no strict 'refs';
+        $source_data = \*{$key};
+    }
+    else
+    {
+        $source_data = $_references_cache{$key};
+    }
+
     if ($source_data)
     {
         my $reftype = Scalar::Util::reftype( $source_data );
@@ -338,8 +351,7 @@ sub _get_reference_descriptor
     }
     elsif ($reftype eq 'SCALAR')
     {
-        $value = $$value // 'undef';
-        $expandable = ref $value ? \1 : \0;
+        $value = defined $$value ? "'$$value'" : 'undef';
     }
     elsif ($reftype eq 'REF')
     {
@@ -363,27 +375,34 @@ sub _get_reference_descriptor
     {
         no strict 'refs';
         $size = scalar grep *$value{$_}, @glob_slots;
-        $value = "*".*$value{PACKAGE}."::".*$value{NAME};
+        $key = $value = "*".*$value{PACKAGE}."::".*$value{NAME};
+        $reftype = undef;
         $expandable = $size ? \1 : \0;
     }
 
+    my $char_code;
+    my $stringified_key = "$key";
+    $stringified_key =~ s{(.)}{
+        $char_code = ord( $1 );
+        $char_code < 32 ? '^'.chr( $char_code + 0x40 ) : $1
+        }gsex;
+
     if ($reftype)
     {
-        $_references_cache{$key} = $key;
-        Scalar::Util::weaken( $_references_cache{$key} );
+        $_references_cache{$stringified_key} = $key;
+        Scalar::Util::weaken( $_references_cache{$stringified_key} );
     }
 
     $name = "$name";
     $value = "$value";
 
-    my $code;
     $name =~ s{(.)}{
-        $code = ord( $1 );
-        $code < 32 ? '^'.chr( $code + 0x40 ) : $1
+        $char_code = ord( $1 );
+        $char_code < 32 ? '^'.chr( $char_code + 0x40 ) : $1
         }gsex;
     $value =~ s{(.)}{
-        $code = ord( $1 );
-        $code < 32 ? '^'.chr( $code + 0x40 ) : $1
+        $char_code = ord( $1 );
+        $char_code < 32 ? '^'.chr( $char_code + 0x40 ) : $1
         }gsex;
 
     return +{
@@ -391,7 +410,7 @@ sub _get_reference_descriptor
         value      => "$value",
         type       => "$type",
         expandable => $expandable,
-        key        => "$key",
+        key        => $stringified_key,
         size       => $size,
         blessed    => $is_blessed,
         ref_depth  => $ref_depth,
@@ -545,6 +564,7 @@ sub _event_handler
 
     while()
     {
+        print STDERR "Waiting for input\n";
         my $command = <$_debug_socket>;
         die 'Debugging socket disconnected' if !defined $command;
         $command =~ s/[\r\n]+$//;
@@ -638,9 +658,9 @@ sub _event_handler
             }
             return;
         }
-        elsif ($command =~ /^getchildren (\d+) (\d+) (.+)$/) # expand,
+        elsif ($command =~ /^getchildren (.+)$/) # expand,
         {
-            _get_reference_subelements( $1, $2, $3 );
+            _get_reference_subelements( $1 );
         }
         elsif ($command eq 'u') # step out
         {
