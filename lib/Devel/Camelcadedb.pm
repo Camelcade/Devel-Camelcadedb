@@ -125,6 +125,7 @@ my %_loaded_breakpoints = (); # map of loaded breakpoints, set and not in form: 
 my %_references_cache = ();   # cache of soft references from peek_my
 
 my @glob_slots = qw/SCALAR ARRAY HASH CODE IO FORMAT/;
+my $glob_slots = join '|', @glob_slots;
 
 my $_debug_server_host;     # remote debugger host
 my $_debug_server_port;     # remote debugger port
@@ -257,10 +258,21 @@ sub _get_reference_subelements
 
     my $source_data;
 
-    if ($key =~ s/^\*//) # hack for globs
+    if ($key =~ /^\*(.+?)(?:\{($glob_slots)\})?$/) # hack for globs
     {
         no strict 'refs';
-        $source_data = \*{$key};
+        my ( $name, $slot) = ($1, $2);
+
+        if ($slot)
+        {
+            $source_data = *{$name}{$slot};
+        }
+        else
+        {
+            $source_data = \*{$name};
+        }
+
+        print STDERR "Got glob ref $key => $source_data";
     }
     else
     {
@@ -301,7 +313,22 @@ sub _get_reference_subelements
         elsif ($reftype eq 'GLOB')
         {
             no strict 'refs';
-            push @$data, map _get_reference_descriptor( $_, \*$source_data{$_} ), grep *$source_data{$_}, @glob_slots;
+            foreach my $glob_slot (@glob_slots)
+            {
+                my $reference = *$source_data{$glob_slot};
+                next unless $reference;
+                my $desciptor = _get_reference_descriptor( $glob_slot, \$reference );
+
+                # hack for DB namespace, see https://github.com/hurricup/Perl5-IDEA/issues/1151
+                if ($glob_slot eq 'HASH' && $key =~ /^\*(::)*(main::)*(::)*DB(::)?$/)
+                {
+                    $desciptor->{expandable} = \0;
+                    $desciptor->{size} = 0;
+                }
+
+                $desciptor->{key} = $key."{$glob_slot}";
+                push @$data, $desciptor;
+            }
         }
         else
         {
@@ -390,7 +417,6 @@ sub _get_reference_descriptor
     if ($reftype)
     {
         $_references_cache{$stringified_key} = $key;
-        Scalar::Util::weaken( $_references_cache{$stringified_key} );
     }
 
     $name = "$name";
@@ -522,6 +548,7 @@ sub _calc_stack_frames
 {
     my $frames = [ ];
     my $depth = 0;
+    %_references_cache = ();
 
     while ()
     {

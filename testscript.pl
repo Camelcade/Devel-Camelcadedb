@@ -2,11 +2,19 @@
 use strict;
 use warnings FATAL => 'all';
 use LWP::UserAgent;
+use v5.10;
 
 format SOMEFORMAT =
 This is format
 .
 
+my $ver = \$^V;
+my $otherver;
+{
+    no strict 'refs';
+    $otherver = *{'::^V'}{SCALAR};
+}
+my $glob = \*::;
 my $deep_object = \\\\\\\LWP::UserAgent->new();
 my $regexp = qr/something/;
 my $scalar = 123;
@@ -31,7 +39,9 @@ my @array = (
         glob       => *::,
         regex      => qr/some/,
         handle     => *STDOUT,
-        format     => *SOMEFORMAT
+        format     => *SOMEFORMAT,
+        version    => $^V,
+
     },
     1,
     5,
