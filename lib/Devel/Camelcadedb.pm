@@ -1007,6 +1007,16 @@ sub step_handler
     return if $_internal_process;
     $_internal_process = 1;
 
+    my $is_breakpoint = !($DB::single || $DB::signal);
+    if ($is_breakpoint)
+    {
+        foreach my $frame (@{$_stack_frames})
+        {
+            $frame->{_single} = STEP_INTO;
+        }
+        $DB::single = STEP_INTO;
+    }
+
     my $old_db_single = $DB::single;
     $DB::single = STEP_CONTINUE;
     @saved = ($@, $!, $,, $/, $\, $^W);
