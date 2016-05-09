@@ -125,6 +125,8 @@ my %_references_cache = ();   # cache of soft references from peek_my
 my @glob_slots = qw/SCALAR ARRAY HASH CODE IO FORMAT/;
 my $glob_slots = join '|', @glob_slots;
 
+my $_dev_mode = 0;          # enable this to get verbose STDERR output from process
+
 my $_debug_server_host;     # remote debugger host
 my $_debug_server_port;     # remote debugger port
 
@@ -165,9 +167,10 @@ sub _dump
 
 sub _report($;@)
 {
+    return unless $_dev_mode;
     my ($message, @sprintf_args) = @_;
     chomp $message;
-    printf STDERR "$message\n", @sprintf_args;
+    printf STDERR "$frame_prefix$message\n", @sprintf_args;
 }
 
 sub _format_caller
@@ -216,12 +219,12 @@ sub _get_loaded_files_map
 sub _dump_stack
 {
     my $depth = 0;
-    _report $frame_prefix."Stack trace:\n";
+    _report "Stack trace:\n";
     while()
     {
         my @caller = caller( $depth );
         last unless defined $caller[2];
-        printf STDERR $frame_prefix.$frame_prefix_step."%s: %s\n", $depth++, _format_caller( @caller );
+        _report $frame_prefix_step."%s: %s\n", $depth++, _format_caller( @caller );
     }
     1;
 }
@@ -229,10 +232,10 @@ sub _dump_stack
 sub _dump_frames
 {
     my $depth = 0;
-    _report $frame_prefix."Frames trace:\n";
+    _report "Frames trace:\n";
     foreach my $frame (@$_stack_frames)
     {
-        printf STDERR $frame_prefix.$frame_prefix_step."%s: %s\n", $depth++,
+        _report $frame_prefix_step."%s: %s\n", $depth++,
             join ', ', map $_ // 'undef', @$frame{qw/subname file current_line _single/},
                         $frame->{is_use_block} ? '(use block)' : ''
         ;
@@ -270,7 +273,7 @@ sub _get_reference_subelements
             $source_data = \*{$name};
         }
 
-        print STDERR "Got glob ref $key => $source_data";
+        _report "Got glob ref $key => $source_data";
     }
     else
     {
@@ -330,13 +333,13 @@ sub _get_reference_subelements
         }
         else
         {
-            print STDERR "Dont know how to iterate $reftype";
+            _report "Dont know how to iterate $reftype";
         }
 
     }
     else
     {
-        print STDERR "No source data for $key\n";
+        _report "No source data for $key\n";
     }
 
     _send_data_to_debugger( $data );
@@ -510,7 +513,7 @@ sub _send_string_to_debugger
     my ($string) = @_;
     $string .= "\n";
     print $_debug_socket $string;
-    print STDERR "* Sent to debugger: $string";
+    _report "Sent to debugger: %s", $string;
 }
 
 sub _get_adjusted_line_number
@@ -589,15 +592,15 @@ sub _event_handler
 
     while()
     {
-        print STDERR "Waiting for input\n";
+        _report "Waiting for input\n";
         my $command = <$_debug_socket>;
         die 'Debugging socket disconnected' if !defined $command;
         $command =~ s/[\r\n]+$//;
-        print STDERR "============> Got command: '$command'\n";
+        _report "============> Got command: '$command'\n";
 
         if ($command eq 'q')
         {
-            print STDERR "Exiting";
+            _report "Exiting";
             exit;
         }
         elsif ($command eq 'l') # list
@@ -606,26 +609,26 @@ sub _event_handler
             {
                 my $src = $DB::dbline[$i] // '';
                 chomp $src;
-                printf STDERR "%s: %s (%s)\n", $i, $src, $DB::dbline[$i] == 0 ? 'unbreakable' : 'breakable';
+                _report "%s: %s (%s)\n", $i, $src, $DB::dbline[$i] == 0 ? 'unbreakable' : 'breakable';
             }
         }
         elsif ($command eq 's') # dump %sub
         {
-            print STDERR _dump( \%DB::sub );
+            _report _dump( \%DB::sub );
         }
         elsif ($command =~ /^e\s+(.+)$/) # eval expresion
         {
             my @lsaved = ($@, $!, $,, $/, $\, $^W);
             my $expr = "package $current_package;$1";
-            print STDERR "Running $expr\n";
+            _report "Running $expr\n";
             ($@, $!, $,, $/, $\, $^W) = @saved;
             my $result = eval $expr;
             ($@, $!, $,, $/, $\, $^W) = @lsaved;
-            print STDERR "Result is $result\n";
+            _report "Result is $result\n";
         }
         elsif ($command eq 'f') # dump keys of %DB::dbline
         {
-            print STDERR _dump( \%_perl_file_id_to_path_map );
+            _report _dump( \%_perl_file_id_to_path_map );
         }
         elsif ($command eq 'g')
         {
@@ -645,19 +648,19 @@ sub _event_handler
             my $line = $1;
             if ($DB::dbline[$line] == 0)
             {
-                print STDERR "Line $line is unbreakable, try another one\n";
+                _report "Line $line is unbreakable, try another one\n";
             }
             else
             {
                 if ($DB::dbline{$line})
                 {
                     $DB::dbline{$line} = 0;
-                    print STDERR "Removed breakpoint from line $line\n";
+                    _report "Removed breakpoint from line $line\n";
                 }
                 else
                 {
                     $DB::dbline{$line} = 1;
-                    print STDERR "Added breakpoint to line $line\n";
+                    _report "Added breakpoint to line $line\n";
                 }
             }
         }
@@ -667,7 +670,7 @@ sub _event_handler
         }
         elsif ($command eq 'v') # show variables
         {
-            _report " * Lexical variables:\n%s", _render_variables( peek_my( 2 ) );
+            _report "Lexical variables:\n%s", _render_variables( peek_my( 2 ) );
         }
         elsif ($command eq 'o') # over,
         {
@@ -719,9 +722,8 @@ sub _set_dbline
     if (defined $current_file_id)
     {
         _report( <<'EOM',
-%sCalling %s %s
+Calling %s %s
 EOM
-            $frame_prefix,
             _format_caller( @caller ),
             ${^GLOBAL_PHASE} // 'unknown',
         );
@@ -751,7 +753,7 @@ sub _enter_frame
         _dump_stack && _dump_frames() if $trace_code_stack_and_frames;
     }
 
-    _report $frame_prefix."Entering frame %s%s: %s%s %s-%s-%s%s",
+    _report "Entering frame %s%s: %s%s %s-%s-%s%s",
         scalar @$_stack_frames + 1,
             $is_use_block ? '(use block)' : '',
         $DB::sub,
@@ -776,13 +778,12 @@ sub _enter_frame
         }
         else
         {
-            _report( $frame_prefix."  * Unable to parse sub data for %s, %s", $DB::sub, $DB::sub{$DB::sub} );
+            _report "  * Unable to parse sub data for %s, %s", $DB::sub, $DB::sub{$DB::sub};
         }
     }
     else
     {
-        _report( $frame_prefix."  * Unable to find file data for %s, %s", $DB::sub, "" #join ', ', keys %DB::sub
-        );
+        _report"  * Unable to find file data for %s, %s", $DB::sub, ""; #join ', ', keys %DB::sub
     }
 
     my $new_stack_frame = {
@@ -805,7 +806,7 @@ sub _exit_frame
     @saved = ($@, $!, $,, $/, $\, $^W);
     my $frame = shift @$_stack_frames;
     $frame_prefix = $frame_prefix_step x (scalar @$_stack_frames);
-    _report $frame_prefix."Leaving frame %s, setting single to %s", (scalar @$_stack_frames + 1), $frame->{_single};
+    _report "Leaving frame %s, setting single to %s", (scalar @$_stack_frames + 1), $frame->{_single};
     $DB::single = $frame->{_single};
     ($@, $!, $,, $/, $\, $^W) = @saved;
 }
@@ -932,7 +933,7 @@ sub _process_new_breakpoints
     {
         $descriptor->{line}++;
 
-        _report( $frame_prefix."Processing descriptor: %s %s", $descriptor->{path}, $descriptor->{line} );
+        _report "Processing descriptor: %s %s", $descriptor->{path}, $descriptor->{line};
 
         my ($path, $line) = @$descriptor{qw/path line/};
 
@@ -989,7 +990,7 @@ sub _calc_real_path
 
     if ($path !~ m{^(/|\w\:)})
     {
-        print STDERR $frame_prefix."Detecting path for $path\n" if $trace_real_path;
+        _report "Detecting path for $path\n" if $trace_real_path;
 
         my $current_dir = Cwd::getcwd();
 
@@ -1000,7 +1001,7 @@ sub _calc_real_path
         $real_path = $path;
     }
     $real_path =~ s{\\}{/}g;
-    print STDERR $frame_prefix."  * $new_filename real path is $real_path\n" if $trace_real_path;
+    _report "$new_filename real path is $real_path\n" if $trace_real_path;
     return $real_path;
 }
 
@@ -1017,18 +1018,17 @@ sub step_handler
     $DB::single = STEP_CONTINUE;
     @saved = ($@, $!, $,, $/, $\, $^W);
 
-    printf STDERR $frame_prefix."Set dbline from step handler $DB::sub, %s\n",
-        join ',', map $_ // 'undef', caller if $trace_set_db_line;
+    _report "Set dbline from step handler $DB::sub, %s\n", join ',', map $_ // 'undef', caller if $trace_set_db_line;
     _set_dbline();
 
-    _report $frame_prefix."Step with %s, %s-%s-%s",
+    _report "Step with %s, %s-%s-%s",
         (join ',', @_) // '',
         $DB::trace // 'undef',
         $DB::signal // 'undef',
         $old_db_single // 'undef',
     ;
 
-    print STDERR $DB::dbline[$current_line];
+    _report $DB::dbline[$current_line];
 
     _event_handler( );
 
@@ -1068,12 +1068,12 @@ sub sub_handler
 
     if ($DB::single == STEP_OVER)
     {
-        print STDERR $frame_prefix."Disabling step in in subcalls\n";
+        _report "Disabling step in in subcalls\n";
         $DB::single = STEP_CONTINUE;
     }
     else
     {
-        printf STDERR $frame_prefix."Keeping step as %s\n", $old_db_single if $stack_frame;
+        _report "Keeping step as %s\n", $old_db_single if $stack_frame;
     }
 
     if ($DB::sub eq 'DESTROY' or substr( $DB::sub, -9 ) eq '::DESTROY' or !defined $wantarray)
@@ -1146,12 +1146,12 @@ sub lsub_handler: lvalue
 
     if ($DB::single == STEP_OVER)
     {
-        print STDERR $frame_prefix."Disabling step in in subcalls\n";
+        _report "Disabling step in in subcalls\n";
         $DB::single = STEP_CONTINUE;
     }
     else
     {
-        printf STDERR $frame_prefix."Keeping step as %s\n", $old_db_single if $stack_frame;
+        _report "Keeping step as %s\n", $old_db_single if $stack_frame;
     }
 
     {
@@ -1189,7 +1189,7 @@ sub load_handler
     my $perl_file_id = $_[0];
     my $real_path = _get_real_path_by_perl_file_id( $perl_file_id );
 
-    _report $frame_prefix."Loading module: %s => %s %s-%s-%s",
+    _report "Loading module: %s => %s %s-%s-%s",
         $perl_file_id,
         $real_path,
         $DB::trace // 'undef',
@@ -1216,7 +1216,7 @@ sub goto_handler
 
     @saved = ($@, $!, $,, $/, $\, $^W);
 
-    _report $frame_prefix."Goto called%s from %s-%s-%s-%s",
+    _report "Goto called%s from %s-%s-%s-%s",
             scalar @_ ? ' with '.(join ',', @_) : '',
         $DB::trace // 'undef',
         $DB::signal // 'undef',
@@ -1238,7 +1238,7 @@ $^P |= FLAG_REPORT_GOTO;
 # http://perldoc.perl.org/perlipc.html#Sockets%3a-Client%2fServer-Communication
 if ($_debug_net_role eq 'server')
 {
-    _report( "Listening for the debugger at %s:%s...", $_local_debug_host, $_local_debug_port );
+    _report "Listening for the debugger at %s:%s...", $_local_debug_host, $_local_debug_port;
     my $_server_socket = IO::Socket::INET->new(
         Listen    => 1,
         LocalAddr => $_local_debug_host,
@@ -1250,7 +1250,7 @@ if ($_debug_net_role eq 'server')
 }
 else
 {
-    _report( "Connecting to the debugger at %s:%s...", $_debug_server_host, $_debug_server_port );
+    _report "Connecting to the debugger at %s:%s...", $_debug_server_host, $_debug_server_port;
     $_debug_socket = IO::Socket::INET->new(
         PeerAddr  => $_debug_server_host,
         LocalPort => $_debug_server_port,
@@ -1260,7 +1260,7 @@ else
 }
 $_debug_socket->autoflush( 1 );
 
-print STDERR $frame_prefix."Set dbline from main\n" if $trace_set_db_line;
+_report "Set dbline from main\n" if $trace_set_db_line;
 
 _set_dbline();
 push @$_stack_frames, {
@@ -1299,7 +1299,7 @@ if ($breakpoints_data =~ /^b (.+)$/s)
 }
 else
 {
-    _report( "Incorrect breakpoints data: %s", $breakpoints_data );
+    _report "Incorrect breakpoints data: %s", $breakpoints_data;
 }
 
 $_internal_process = 0;
