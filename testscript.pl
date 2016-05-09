@@ -60,6 +60,7 @@ sub mysub
     $something++;
     $otherone += $something;
 
+    $ua = LWP::UserAgent->new();
     $something = 'Hi there';
     $something .= $otherone;
 
@@ -68,7 +69,6 @@ sub mysub
 
 sub mysub2
 {
-    $ua = LWP::UserAgent->new();
     print 69 ."\n";
 }
 

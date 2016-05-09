@@ -149,7 +149,7 @@ my $current_package;
 my $current_file_id;
 my $current_line;
 
-my $trace_set_db_line = 0; # report _set_dbline invocation
+my $trace_set_db_line = 1; # report _set_dbline invocation
 my $trace_code_stack_and_frames = 0; # report traces on entering code
 my $trace_real_path = 0; # trasing real path transition
 
@@ -700,19 +700,7 @@ sub _event_handler
         }
         elsif ($command eq 't') # stack trace
         {
-            _report( "* Stack trace" );
-
-            foreach my $frame (@$_stack_frames)
-            {
-                _report( "  * %s(%s) from %s, line %s",
-                    $frame->{subname},
-                    join( ', ', @{$frame->{args}} ),
-                    $frame->{file},
-                    $frame->{from_line}
-                );
-
-                _report( "    * Lexical variables:\n%s", _render_variables( $frame->{lexical_vars} ) );
-            }
+            _dump_stack && _dump_frames;
         }
         else
         {
@@ -747,18 +735,10 @@ EOM
     }
 }
 
-sub _update_frame_position
-{
-    my $current_stack_frame = _get_current_stack_frame();
-    $current_stack_frame->{current_line} = $current_line;
-    $current_stack_frame->{file} = $current_file_id;
-    $current_stack_frame->{lexical_vars} = peek_my( 2 );
-}
 
 sub _enter_frame
 {
     my ($args_ref, $old_db_single) = @_;
-    _update_frame_position();
 
     my $is_use_block = 0;
     my $deparsed_block = '';
@@ -813,7 +793,6 @@ sub _enter_frame
         is_use_block  => $is_use_block,
         deparsed_code => $deparsed_block,
         _single       => $old_db_single,
-        _dbline       => *DB::dbline
     };
     unshift @$_stack_frames, $new_stack_frame;
     ($@, $!, $,, $/, $\, $^W) = @saved;
@@ -828,7 +807,6 @@ sub _exit_frame
     $frame_prefix = $frame_prefix_step x (scalar @$_stack_frames);
     _report $frame_prefix."Leaving frame %s, setting single to %s", (scalar @$_stack_frames + 1), $frame->{_single};
     $DB::single = $frame->{_single};
-    *DB::dbline = $frame->{_dbline};
     ($@, $!, $,, $/, $\, $^W) = @saved;
 }
 
@@ -1039,11 +1017,9 @@ sub step_handler
     $DB::single = STEP_CONTINUE;
     @saved = ($@, $!, $,, $/, $\, $^W);
 
-    printf STDERR "WE ARE IN %s", $DB::sub // 'unknown sub';
-
-    print STDERR $frame_prefix."Set dbline from step handler\n" if $trace_set_db_line;
+    printf STDERR $frame_prefix."Set dbline from step handler $DB::sub, %s\n",
+        join ',', map $_ // 'undef', caller if $trace_set_db_line;
     _set_dbline();
-    _update_frame_position();
 
     _report $frame_prefix."Step with %s, %s-%s-%s",
         (join ',', @_) // '',
@@ -1075,9 +1051,6 @@ sub sub_handler
 
         $DB::single = STEP_CONTINUE;
 
-        printf STDERR $frame_prefix."Set dbline from sub handler $DB::sub, %s\n",
-            join ',', map $_ // 'undef', caller if $trace_set_db_line;
-        _set_dbline();
         $stack_frame = _enter_frame( [ @_ ], $old_db_single );
 
         if ($current_package && $current_package eq 'DB')
@@ -1165,8 +1138,6 @@ sub lsub_handler: lvalue
         $_internal_process = 1;
 
         $DB::single = STEP_CONTINUE;
-        print STDERR $frame_prefix."Set dbline from lsub handler\n" if $trace_set_db_line;
-        _set_dbline();
         $stack_frame = _enter_frame( [ @_ ], $old_db_single );
 
         $DB::single = $old_db_single;
@@ -1218,13 +1189,6 @@ sub load_handler
     my $perl_file_id = $_[0];
     my $real_path = _get_real_path_by_perl_file_id( $perl_file_id );
 
-    if (!$old_internal_process)
-    {
-        print STDERR $frame_prefix."Set dbline from load handler\n" if $trace_set_db_line;
-        _set_dbline();
-        _update_frame_position();
-    }
-
     _report $frame_prefix."Loading module: %s => %s %s-%s-%s",
         $perl_file_id,
         $real_path,
@@ -1251,15 +1215,9 @@ sub goto_handler
     $DB::single = STEP_CONTINUE;
 
     @saved = ($@, $!, $,, $/, $\, $^W);
-    print STDERR $frame_prefix."Set dbline from goto handler\n" if $trace_set_db_line;
-    _set_dbline();
-    _update_frame_position();
 
-    _report $frame_prefix."Goto called%s from %s:: %s line %s %s-%s-%s-%s",
+    _report $frame_prefix."Goto called%s from %s-%s-%s-%s",
             scalar @_ ? ' with '.(join ',', @_) : '',
-        $current_package // 'undef',
-        $current_file_id // 'undef',
-        $current_line // 'undef',
         $DB::trace // 'undef',
         $DB::signal // 'undef',
         $old_db_single // 'undef',
@@ -1311,7 +1269,6 @@ push @$_stack_frames, {
         file         => $current_file_id,
         current_line => $current_line,
         _single      => STEP_INTO,
-        _dbline      => *DB::dbline,
     };
 
 _dump_stack && _dump_frames if $trace_code_stack_and_frames;
