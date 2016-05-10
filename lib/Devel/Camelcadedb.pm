@@ -7,7 +7,7 @@ use 5.008;
 use strict;
 use warnings;
 use IO::Socket::INET;
-use PadWalker qw/peek_my/;
+use PadWalker qw/peek_my peek_our/;
 use Scalar::Util;
 #use constant {
 #    FLAG_SUB_ENTER_EXIT         => 0x01,
@@ -160,7 +160,7 @@ sub _dump
 
 sub _report($;@)
 {
-    return unless $_dev_mode;
+    return unless ($_dev_mode);
     my ($message, @sprintf_args) = @_;
     chomp $message;
     printf STDERR "$frame_prefix$message\n", @sprintf_args;
@@ -200,10 +200,10 @@ sub _get_loaded_files_map
     my %result = ();
     foreach(keys %::)
     {
-        next unless /^_</;
-        next if /\(eval/;
+        next unless (/^_</);
+        next if (/\(eval/);
         my $glob = $::{$_};
-        next unless *$glob{ARRAY} && scalar @{*$glob{ARRAY}};
+        next unless (*$glob{ARRAY} && scalar @{*$glob{ARRAY}});
         $result{$_} = ${*$glob};
     }
     return \%result;
@@ -216,7 +216,7 @@ sub _dump_stack
     while()
     {
         my @caller = caller( $depth );
-        last unless defined $caller[2];
+        last unless (defined $caller[2]);
         _report $frame_prefix_step."%s: %s\n", $depth++, _format_caller( @caller );
     }
     1;
@@ -310,7 +310,7 @@ sub _get_reference_subelements
             foreach my $glob_slot (@glob_slots)
             {
                 my $reference = *$source_data{$glob_slot};
-                next unless $reference;
+                next unless ($reference);
                 my $desciptor = _get_reference_descriptor( $glob_slot, \$reference );
 
                 # hack for DB namespace, see https://github.com/hurricup/Perl5-IDEA/issues/1151
@@ -549,13 +549,20 @@ sub _calc_stack_frames
         my ($package, $filename, $line, $subroutine, $hasargs,
             $wantarray, $evaltext, $is_require, $hints, $bitmask, $hinthash) = caller( $depth );
 
-        last unless defined $filename;
+        last unless (defined $filename);
 
         if ($package && $package ne 'DB')
         {
             if (@$frames)
             {
                 $frames->[-1]->{name} = $subroutine;
+            }
+
+            my $global_variables = [ ];
+            my $global_variables_hash = eval {peek_our( $depth + 1 )};
+            unless ($@)
+            {
+                $global_variables = _format_variables( $global_variables_hash );
             }
 
             my $lexical_variables = [ ];
@@ -565,11 +572,13 @@ sub _calc_stack_frames
                 $lexical_variables = _format_variables( $variables_hash );
             }
 
+
             push @$frames, {
                     file     => _get_real_path_by_normalized_perl_file_id( $filename ),
                     line     => $line - 1,
                     name     => 'main::',
-                    lexicals => $lexical_variables
+                    lexicals => $lexical_variables,
+                    globals  => $global_variables,
                 };
         }
 
@@ -587,7 +596,7 @@ sub _event_handler
     {
         _report "Waiting for input\n";
         my $command = <$_debug_socket>;
-        die 'Debugging socket disconnected' if !defined $command;
+        die 'Debugging socket disconnected' if (!defined $command);
         $command =~ s/[\r\n]+$//;
         _report "============> Got command: '$command'\n";
 
@@ -743,7 +752,7 @@ sub _enter_frame
         $deparsed_block = _deparse_code( $DB::sub );
         $is_use_block = $deparsed_block =~ /require\s+[\w\:]+\s*;\s*do/si;
 
-        _dump_stack && _dump_frames() if $trace_code_stack_and_frames;
+        _dump_stack && _dump_frames() if ($trace_code_stack_and_frames);
     }
 
     _report "Entering frame %s%s: %s%s %s-%s-%s%s",
@@ -983,7 +992,7 @@ sub _calc_real_path
 
     if ($path !~ m{^(/|\w\:)})
     {
-        _report "Detecting path for $path\n" if $trace_real_path;
+        _report "Detecting path for $path\n" if ($trace_real_path);
 
         my $current_dir = Cwd::getcwd();
 
@@ -994,7 +1003,7 @@ sub _calc_real_path
         $real_path = $path;
     }
     $real_path =~ s{\\}{/}g;
-    _report "$new_filename real path is $real_path\n" if $trace_real_path;
+    _report "$new_filename real path is $real_path\n" if ($trace_real_path);
     return $real_path;
 }
 
@@ -1004,7 +1013,7 @@ sub _calc_real_path
 # feature is disabled when executing inside DB::DB() , including functions called from it unless $^D & (1<<30) is true.
 sub step_handler
 {
-    return if $_internal_process;
+    return if ($_internal_process);
     $_internal_process = 1;
 
     my $is_breakpoint = !($DB::single || $DB::signal);
@@ -1021,7 +1030,7 @@ sub step_handler
     $DB::single = STEP_CONTINUE;
     @saved = ($@, $!, $,, $/, $\, $^W);
 
-    _report "Set dbline from step handler $DB::sub, %s\n", join ',', map $_ // 'undef', caller if $trace_set_db_line;
+    _report "Set dbline from step handler $DB::sub, %s\n", join ',', map $_ // 'undef', caller if ($trace_set_db_line);
     _set_dbline();
 
     _report "Step with %s, %s-%s-%s",
@@ -1076,7 +1085,7 @@ sub sub_handler
     }
     else
     {
-        _report "Keeping step as %s\n", $old_db_single if $stack_frame;
+        _report "Keeping step as %s\n", $old_db_single if ($stack_frame);
     }
 
     if ($DB::sub eq 'DESTROY' or substr( $DB::sub, -9 ) eq '::DESTROY' or !defined $wantarray)
@@ -1154,7 +1163,7 @@ sub lsub_handler: lvalue
     }
     else
     {
-        _report "Keeping step as %s\n", $old_db_single if $stack_frame;
+        _report "Keeping step as %s\n", $old_db_single if ($stack_frame);
     }
 
     {
@@ -1200,7 +1209,7 @@ sub load_handler
         $old_db_single // 'undef',
     ;
 
-    _set_break_points_for_file( $perl_file_id ) if $ready_to_go;
+    _set_break_points_for_file( $perl_file_id ) if ($ready_to_go);
 
     $_internal_process = $old_internal_process;
 
@@ -1211,7 +1220,7 @@ sub load_handler
 # &DB::goto is made, with $DB::sub holding the name of the subroutine being entered.
 sub goto_handler
 {
-    return if $_internal_process;
+    return if ($_internal_process);
     $_internal_process = 1;
 
     my $old_db_single = $DB::single;
@@ -1271,15 +1280,15 @@ else
             ReuseAddr => 1,
             Proto     => 'tcp',
         );
-        last if $_debug_socket;
+        last if ($_debug_socket);
         sleep( 1 ); # this is kinda hacky
     }
-    die "Error connecting to $ENV{PERL5_DEBUG_HOST}:$ENV{PERL5_DEBUG_PORT}" unless $_debug_socket;
+    die "Error connecting to $ENV{PERL5_DEBUG_HOST}:$ENV{PERL5_DEBUG_PORT}" unless ($_debug_socket);
 }
 $_debug_socket->autoflush( 1 );
 print STDERR "Connected.\n";
 
-_report "Set dbline from main\n" if $trace_set_db_line;
+_report "Set dbline from main\n" if ($trace_set_db_line);
 
 _set_dbline();
 push @$_stack_frames, {
@@ -1290,7 +1299,7 @@ push @$_stack_frames, {
         _single      => STEP_INTO,
     };
 
-_dump_stack && _dump_frames if $trace_code_stack_and_frames;
+_dump_stack && _dump_frames if ($trace_code_stack_and_frames);
 
 *DB::DB = \&step_handler;
 *DB::sub = \&sub_handler;
@@ -1310,7 +1319,7 @@ $frame_prefix = $frame_prefix_step;
 _send_event( "READY" );
 _report "Waiting for breakpoints...";
 my $breakpoints_data = <$_debug_socket>;
-die "Connection closed" unless defined $breakpoints_data;
+die "Connection closed" unless (defined $breakpoints_data);
 
 if ($breakpoints_data =~ /^b (.+)$/s)
 {
