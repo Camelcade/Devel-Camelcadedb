@@ -652,11 +652,38 @@ sub _event_handler
         }
         elsif ($command =~ /^e\s+(.+)$/) # eval expresion
         {
+            my $data = $1;
+            my $request_object = _deserialize( $data );
+            my $expression = $request_object->{expression} // '';
             my @lsaved = ($@, $!, $,, $/, $\, $^W);
-            my $expr = "package $current_package;$1";
+            my $expr = "package $current_package;$expression";
             _report "Running $expr\n";
             ($@, $!, $,, $/, $\, $^W) = @saved;
             my $result = eval $expr;
+
+            if (my $e = $@)
+            {
+                # fixme handle object exceptions
+                unless (ref $e) # message, change it
+                {
+                    $e = join "; ", map {s/ at \(eval \d+.+$//;
+                            $_ } grep $_, split /[\r\n]+/, $e;
+                }
+                print STDERR $e."\n";
+                $result = {
+                    error  => \1,
+                    result => _get_reference_descriptor( error => \$e )
+                };
+            }
+            else
+            {
+                $result = {
+                    error  => \0,
+                    result => _get_reference_descriptor( result => \$result )
+                };
+            }
+            _send_data_to_debugger( $result );
+
             ($@, $!, $,, $/, $\, $^W) = @lsaved;
             _report "Result is $result\n";
         }
