@@ -170,7 +170,7 @@ sub _report($;@)
 
     unless ($_debug_log_fh)
     {
-        my $debug_log_filename = sprintf 'current_debug.log', time;
+        my $debug_log_filename = 'current_debug.log';
         open $_debug_log_fh, ">", $debug_log_filename or die "Unable to open debug log $debug_log_filename $!";
         $_debug_log_fh->autoflush( 1 );
     }
@@ -654,37 +654,12 @@ sub _event_handler
         {
             my $data = $1;
             my $request_object = _deserialize( $data );
-            my $expression = $request_object->{expression} // '';
-            my @lsaved = ($@, $!, $,, $/, $\, $^W);
-            my $expr = "package $current_package;$expression";
-            _report "Running $expr\n";
-            ($@, $!, $,, $/, $\, $^W) = @saved;
-            my $result = eval $expr;
 
-            if (my $e = $@)
-            {
-                # fixme handle object exceptions
-                unless (ref $e) # message, change it
-                {
-                    $e = join "; ", map {s/ at \(eval \d+.+$//;
-                            $_ } grep $_, split /[\r\n]+/, $e;
-                }
-                print STDERR $e."\n";
-                $result = {
-                    error  => \1,
-                    result => _get_reference_descriptor( error => \$e )
-                };
-            }
-            else
-            {
-                $result = {
-                    error  => \0,
-                    result => _get_reference_descriptor( result => \$result )
-                };
-            }
+            my $result = _eval_expression( $request_object->{expression} // '' );
+            $result->{result} = _get_reference_descriptor( result => $result->{result} );
+
             _send_data_to_debugger( $result );
 
-            ($@, $!, $,, $/, $\, $^W) = @lsaved;
             _report "Result is $result\n";
         }
         elsif ($command eq 'f') # dump keys of %DB::dbline
@@ -945,10 +920,56 @@ sub _get_loaded_breakpoints_by_real_path
     return exists $_loaded_breakpoints{$path} ? $_loaded_breakpoints{$path} : undef;
 }
 
-sub _get_loaded_breakpoints_by_file_id
+sub _get_breakpoint
 {
-    my ($file_id) = @_;
-    return _get_loaded_breakpoints_by_real_path( _get_real_path_by_perl_file_id( $file_id ) );
+    return if $DB::single || $DB::signal;
+    my $loaded_breakpoints = _get_loaded_breakpoints_by_real_path( _get_real_path_by_normalized_perl_file_id( $current_file_id ) );
+    if ($loaded_breakpoints && $loaded_breakpoints->{$current_line})
+    {
+        return $loaded_breakpoints->{$current_line};
+    }
+    return;
+}
+
+sub _eval_expression
+{
+    my ($expression ) = @_;
+
+    my @lsaved = ($@, $!, $,, $/, $\, $^W);
+    my $expr = "package $current_package;$expression";
+    _report "Running $expr\n";
+    ($@, $!, $,, $/, $\, $^W) = @saved;
+
+    my $result;
+
+    {
+        local $SIG{__WARN__} = sub {};
+        $result = eval $expr;
+    }
+
+    if (my $e = $@)
+    {
+        # fixme handle object exceptions
+        unless (ref $e) # message, change it
+        {
+            $e = join "; ", map {s/ at \(eval \d+.+$//;
+                    $_ } grep $_, split /[\r\n]+/, $e;
+        }
+        $result = {
+            error  => \1,
+            result => $e
+        };
+    }
+    else
+    {
+        $result = {
+            error  => \0,
+            result => $result
+        };
+    }
+    ($@, $!, $,, $/, $\, $^W) = @lsaved;
+
+    return $result;
 }
 
 sub _set_breakpoint
@@ -960,7 +981,7 @@ sub _set_breakpoint
         line => $line - 1,
     };
 
-    if ($source_lines->[$line] == 0)
+    if (exists $source_lines->[$line] && $source_lines->[$line] == 0)
     {
         _send_event( "BREAKPOINT_DENIED", $event_data );
     }
@@ -1067,10 +1088,22 @@ sub step_handler
 {
     return if $_internal_process;
     $_internal_process = 1;
+    @saved = ($@, $!, $,, $/, $\, $^W);
 
-    my $is_breakpoint = !($DB::single || $DB::signal);
-    if ($is_breakpoint)
+    _report "Set dbline from step handler $DB::sub, %s\n", join ',', map $_ // 'undef', caller if $trace_set_db_line;
+    _set_dbline();
+
+    if (my $breakpoint = _get_breakpoint)
     {
+        my $condition = $breakpoint->{condition};
+
+        if ($condition && !_eval_expression( $condition )->{result})
+        {
+            ($@, $!, $,, $/, $\, $^W) = @saved;
+            $_internal_process = 0;
+            return;
+        }
+
         foreach my $frame (@{$_stack_frames})
         {
             $frame->{_single} = STEP_INTO;
@@ -1080,10 +1113,7 @@ sub step_handler
 
     my $old_db_single = $DB::single;
     $DB::single = STEP_CONTINUE;
-    @saved = ($@, $!, $,, $/, $\, $^W);
 
-    _report "Set dbline from step handler $DB::sub, %s\n", join ',', map $_ // 'undef', caller if $trace_set_db_line;
-    _set_dbline();
 
     _report "Step with %s, %s-%s-%s",
         (join ',', @_) // '',
@@ -1093,7 +1123,6 @@ sub step_handler
     ;
 
     _report $DB::dbline[$current_line];
-
     _event_handler( );
 
     ($@, $!, $,, $/, $\, $^W) = @saved;

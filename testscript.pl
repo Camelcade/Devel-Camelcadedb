@@ -50,6 +50,9 @@ my @array = (
     1,
     5,
     6,
+    'some',
+    'test',
+
 );
 
 use Testmod;
@@ -62,6 +65,11 @@ sub mysub
     my $otherone = 5;
 
     mysub2( 234 );
+
+    foreach my $element (@array)
+    {
+        say $element;
+    }
 
     $something++;
     $otherone += $something;
