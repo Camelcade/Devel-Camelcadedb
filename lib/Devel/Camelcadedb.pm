@@ -9,6 +9,9 @@ use warnings;
 use IO::Socket::INET;
 use PadWalker qw/peek_my peek_our/;
 use Scalar::Util;
+use File::Spec;
+our $VERSION = 1;
+
 #use constant {
 #    FLAG_SUB_ENTER_EXIT         => 0x01,
 #    FLAG_LINE_BY_LINE           => 0x02,
@@ -129,6 +132,7 @@ my $_dev_mode = 0;          # enable this to get verbose STDERR output from proc
 
 my $_debug_socket;
 my $_debug_packed_address;
+my $_debug_log_fh;
 
 my $coder;  # JSON::XS coder
 my $deparser; # B::Deparse deparser
@@ -163,7 +167,15 @@ sub _report($;@)
     return unless ($_dev_mode);
     my ($message, @sprintf_args) = @_;
     chomp $message;
-    printf STDERR "$frame_prefix$message\n", @sprintf_args;
+
+    unless ($_debug_log_fh)
+    {
+        my $debug_log_filename = sprintf 'current_debug.log', time;
+        open $_debug_log_fh, ">", $debug_log_filename or die "Unable to open debug log $debug_log_filename $!";
+        $_debug_log_fh->autoflush( 1 );
+    }
+
+    printf $_debug_log_fh "$frame_prefix$message\n", @sprintf_args;
 }
 
 sub _format_caller
@@ -747,13 +759,16 @@ sub _enter_frame
     my $is_use_block = 0;
     my $deparsed_block = '';
 
-    if (ref $DB::sub)
-    {
-        $deparsed_block = _deparse_code( $DB::sub );
-        $is_use_block = $deparsed_block =~ /require\s+[\w\:]+\s*;\s*do/si;
+    die "Debugging session stopped" unless ($_debug_socket && $_debug_socket->connected);
 
-        _dump_stack && _dump_frames() if ($trace_code_stack_and_frames);
-    }
+    # gives huge overhead, need to light it, deparse on demand!!! stupid fuck
+    #    if (ref $DB::sub)
+    #    {
+    #        $deparsed_block = _deparse_code( $DB::sub );
+    #        $is_use_block = $deparsed_block =~ /require\s+[\w\:]+\s*;\s*do/si;
+    #
+    #        _dump_stack && _dump_frames() if ($trace_code_stack_and_frames);
+    #    }
 
     _report "Entering frame %s%s: %s%s %s-%s-%s%s",
         scalar @$_stack_frames + 1,
@@ -1002,6 +1017,8 @@ sub _calc_real_path
     {
         $real_path = $path;
     }
+
+    $real_path = File::Spec->canonpath( $real_path );
     $real_path =~ s{\\}{/}g;
     _report "$new_filename real path is $real_path\n" if ($trace_real_path);
     return $real_path;
@@ -1245,12 +1262,17 @@ $^P |= FLAG_REPORT_GOTO;
 
 unless ($ENV{PERL5_DEBUG_ROLE} && $ENV{PERL5_DEBUG_HOST} && $ENV{PERL5_DEBUG_PORT})
 {
-    print STDERR <<'EOM';
+    printf STDERR <<'EOM', map $_ // 'undefined', @ENV{qw/PERL5_DEBUG_ROLE PERL5_DEBUG_HOST PERL5_DEBUG_PORT/};
 Can't start debugging session. In order to make it work, you should set up environment variables:
 
 PERL5_DEBUG_ROLE - set this to 'server' if you want to make Perl process act as a server, and to 'client' to make it connect to IDEA.
 PERL5_DEBUG_HOST - host to bind or connect, depending on role.
 PERL5_DEBUG_PORT - host to listen or connect, depending on role.
+
+Atm we've got:
+ PERL5_DEBUG_ROLE=%s
+ PERL5_DEBUG_HOST=%s
+ PERL5_DEBUG_PORT=%s
 EOM
 
     exit;
