@@ -561,6 +561,9 @@ sub _calc_stack_frames
         my ($package, $filename, $line, $subroutine, $hasargs,
             $wantarray, $evaltext, $is_require, $hints, $bitmask, $hinthash) = caller( $depth );
 
+        my $cnt = 0;
+        my %frame_args = map{ '$_['.$cnt++.']' => $_ } @DB::args;
+
         last unless defined $filename;
 
         if ($package && $package ne 'DB')
@@ -584,13 +587,16 @@ sub _calc_stack_frames
                 $lexical_variables = _format_variables( $variables_hash );
             }
 
+            $frames->[-1]->{args} = _format_variables( \%frame_args ) if scalar @$frames;
 
             push @$frames, {
-                    file     => _get_real_path_by_normalized_perl_file_id( $filename ),
-                    line     => $line - 1,
-                    name     => 'main::',
-                    lexicals => $lexical_variables,
-                    globals  => $global_variables,
+                    file      => _get_real_path_by_normalized_perl_file_id( $filename ),
+                    line      => $line - 1,
+                    name      => 'main::',
+                    lexicals  => $lexical_variables,
+                    globals   => $global_variables,
+                    main_size => scalar keys %::,
+                    args      => [ ]
                 };
         }
 
@@ -804,11 +810,10 @@ sub _enter_frame
     }
 
     my $new_stack_frame = {
-        subname       => $DB::sub,
-        args          => $args_ref,
-        file          => $sub_file,
-        current_line  => $sub_line,
-        _single       => $old_db_single,
+        subname      => $DB::sub,
+        file         => $sub_file,
+        current_line => $sub_line,
+        _single      => $old_db_single,
     };
     unshift @$_stack_frames, $new_stack_frame;
     ($@, $!, $,, $/, $\, $^W) = @saved;
@@ -1318,7 +1323,6 @@ _report "Set dbline from main\n" if $trace_set_db_line;
 _set_dbline();
 push @$_stack_frames, {
         subname      => 'SCRIPT',
-        args         => [ @ARGV ],
         file         => $current_file_id,
         current_line => $current_line,
         _single      => STEP_INTO,

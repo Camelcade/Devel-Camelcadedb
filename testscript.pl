@@ -75,7 +75,7 @@ sub mysub
 
 sub mysub2
 {
-    Carp::longmess;
+    Carp::confess;
     print 69 ."\n";
 }
 
