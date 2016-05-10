@@ -3,6 +3,7 @@ use strict;
 use warnings FATAL => 'all';
 use LWP::UserAgent;
 use v5.10;
+use Carp;
 
 our $someglobal;
 state $somestate;
@@ -60,6 +61,8 @@ sub mysub
     my $something = 123;
     my $otherone = 5;
 
+    mysub2( 234 );
+
     $something++;
     $otherone += $something;
 
@@ -72,10 +75,11 @@ sub mysub
 
 sub mysub2
 {
+    Carp::longmess;
     print 69 ."\n";
 }
 
-mysub();
+mysub( 123 );
 somethingTestmod();
 
 eval {

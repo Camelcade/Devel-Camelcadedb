@@ -128,7 +128,7 @@ my %_references_cache = ();   # cache of soft references from peek_my
 my @glob_slots = qw/SCALAR ARRAY HASH CODE IO FORMAT/;
 my $glob_slots = join '|', @glob_slots;
 
-my $_dev_mode = 0;          # enable this to get verbose STDERR output from process
+my $_dev_mode = 1;          # enable this to get verbose STDERR output from process
 
 my $_debug_socket;
 my $_debug_packed_address;
@@ -948,7 +948,8 @@ sub _process_new_breakpoints
     {
         $descriptor->{line}++;
 
-        _report "Processing descriptor: %s %s", $descriptor->{path}, $descriptor->{line};
+        _report "Processing descriptor: %s %s %s", $descriptor->{path}, $descriptor->{line},
+                $descriptor->{remove} ? 'remove' : 'set';
 
         my ($path, $line) = @$descriptor{qw/path line/};
 
@@ -972,6 +973,10 @@ sub _process_new_breakpoints
             if ((my $breakpoints_map = _get_perl_line_breakpoints_map_by_real_path( $path )) && (my $source_lines = _get_perl_source_lines_by_real_path( $path )))
             {
                 _set_breakpoint( $path, $line, $source_lines, $breakpoints_map );
+            }
+            else
+            {
+                _report "Error: Path: %s, Breakpoints map %s; Source lines: %s", $path, $breakpoints_map, $source_lines;
             }
         }
         # suppose is not loaded
@@ -1335,6 +1340,14 @@ require B::Deparse;
 require JSON::XS;
 
 $frame_prefix = $frame_prefix_step;
+
+foreach my $main_key (keys %::)
+{
+    if ($main_key =~ /_<(.+)/)
+    {
+        _get_real_path_by_normalized_perl_file_id( $1 );
+    }
+}
 
 _send_event( "READY" );
 _report "Waiting for breakpoints...";
