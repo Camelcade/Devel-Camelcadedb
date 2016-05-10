@@ -4,6 +4,9 @@ use warnings FATAL => 'all';
 use LWP::UserAgent;
 use v5.10;
 
+our $someglobal;
+state $somestate;
+
 format SOMEFORMAT =
 This is format
 .
