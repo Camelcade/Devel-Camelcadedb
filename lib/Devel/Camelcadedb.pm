@@ -128,7 +128,7 @@ my %_references_cache = ();   # cache of soft references from peek_my
 my @glob_slots = qw/SCALAR ARRAY HASH CODE IO FORMAT/;
 my $glob_slots = join '|', @glob_slots;
 
-my $_dev_mode = 1;          # enable this to get verbose STDERR output from process
+my $_dev_mode = 0;          # enable this to get verbose STDERR output from process
 
 my $_debug_socket;
 my $_debug_packed_address;
@@ -638,7 +638,8 @@ sub _event_handler
 
     while()
     {
-        _report "Waiting for input\n";
+        local $/ = "\n";
+        _report "Waiting for input %s\n", ord( $/ );
         my $command = <$_debug_socket>;
         die 'Debugging socket disconnected' if !defined $command;
         $command =~ s/[\r\n]+$//;
@@ -1081,7 +1082,7 @@ sub step_handler
     $, = "";      # output field separator is null string
     $/ = "\n";    # input record separator is newline
     $\ = "";      # output record separator is null string
-    $^W = 0;       # warnings are off
+    $^W = 0;      # warnings are off
 
     # updating current position
     my @caller = caller();
