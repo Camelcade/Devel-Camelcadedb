@@ -132,7 +132,7 @@ my $_dev_mode = 1;          # enable this to get verbose STDERR output from proc
 
 my $_debug_socket;
 my $_debug_packed_address;
-my $_debug_log_fh;
+my $_debug_log_fh = *STDERR;
 
 my $coder;  # JSON::XS coder
 my $deparser; # B::Deparse deparser
@@ -148,7 +148,6 @@ my $current_package;
 my $current_file_id;
 my $current_line;
 
-my $trace_set_db_line = 1; # report _set_dbline invocation
 my $trace_code_stack_and_frames = 0; # report traces on entering code
 my $trace_real_path = 0; # trasing real path transition
 
@@ -255,10 +254,23 @@ sub _deparse_code
     return $deparser->coderef2text( $code );
 }
 
+sub _send_transaction_response
+{
+    my ($transaction_id, $data) = @_;
+
+    _send_data_to_debugger( +{
+            event         => 'RESPONSE',
+            transactionId => $transaction_id,
+            data          => $data,
+        }
+    );
+}
+
 sub _get_reference_subelements
 {
     my ($request_serialized_object) = @_;
-    my $request_object = _deserialize( $request_serialized_object );
+    my $transaction_wrapper = _deserialize( $request_serialized_object );
+    my ($transaction_id, $request_object) = @$transaction_wrapper{qw/id data/};
     my ($offset, $size, $key) = @$request_object{qw/offset limit key/};
     my $data = [ ];
 
@@ -347,7 +359,7 @@ sub _get_reference_subelements
         _report "No source data for $key\n";
     }
 
-    _send_data_to_debugger( $data );
+    _send_transaction_response( $transaction_id, $data );
 }
 
 sub _format_variables
@@ -653,12 +665,14 @@ sub _event_handler
         elsif ($command =~ /^e\s+(.+)$/) # eval expresion
         {
             my $data = $1;
-            my $request_object = _deserialize( $data );
+            my $transaction_data = _deserialize( $data );
+
+            my ($transaction_id, $request_object) = @$transaction_data{qw/id data/};
 
             my $result = _eval_expression( $request_object->{expression} // '' );
             $result->{result} = _get_reference_descriptor( result => $result->{result} );
 
-            _send_data_to_debugger( $result );
+            _send_transaction_response( $transaction_id, $result );
 
             _report "Result is $result\n";
         }
@@ -749,30 +763,6 @@ sub _event_handler
     }
 }
 
-sub _set_dbline
-{
-    my @caller = caller( 1 );
-
-    ($current_package, $current_file_id, $current_line) = @caller[0, 1, 2];
-
-    if (defined $current_file_id)
-    {
-        _report( <<'EOM',
-Calling %s %s
-EOM
-            _format_caller( @caller ),
-            ${^GLOBAL_PHASE} // 'unknown',
-        );
-
-        no strict 'refs';
-        *DB::dbline = *{"::_<$current_file_id"};
-    }
-    else
-    {
-        _dump_stack && _dump_frames && warn "CAN'T FIND CALLER;\n";
-    }
-}
-
 
 sub _enter_frame
 {
@@ -818,19 +808,16 @@ sub _enter_frame
         _single      => $old_db_single,
     };
     unshift @$_stack_frames, $new_stack_frame;
-    ($@, $!, $,, $/, $\, $^W) = @saved;
     return $new_stack_frame;
 }
 
 
 sub _exit_frame
 {
-    @saved = ($@, $!, $,, $/, $\, $^W);
     my $frame = shift @$_stack_frames;
     $frame_prefix = $frame_prefix_step x (scalar @$_stack_frames);
     _report "Leaving frame %s, setting single to %s", (scalar @$_stack_frames + 1), $frame->{_single};
     $DB::single = $frame->{_single};
-    ($@, $!, $,, $/, $\, $^W) = @saved;
 }
 
 sub _get_normalized_perl_file_id
@@ -935,10 +922,8 @@ sub _eval_expression
 {
     my ($expression ) = @_;
 
-    my @lsaved = ($@, $!, $,, $/, $\, $^W);
-    my $expr = "package $current_package;$expression";
+    my $expr = "package $current_package;".'( $@, $!, $^E, $,, $/, $\, $^W ) = @DB::saved;'.$expression;
     _report "Running $expr\n";
-    ($@, $!, $,, $/, $\, $^W) = @saved;
 
     my $result;
 
@@ -967,7 +952,6 @@ sub _eval_expression
             result => $result
         };
     }
-    ($@, $!, $,, $/, $\, $^W) = @lsaved;
 
     return $result;
 }
@@ -1088,10 +1072,37 @@ sub step_handler
 {
     return if $_internal_process;
     $_internal_process = 1;
-    @saved = ($@, $!, $,, $/, $\, $^W);
 
-    _report "Set dbline from step handler $DB::sub, %s\n", join ',', map $_ // 'undef', caller if $trace_set_db_line;
-    _set_dbline();
+    # Save eval failure, command failure, extended OS error, output field
+    # separator, input record separator, output record separator and
+    # the warning setting.
+    @saved = ( $@, $!, $^E, $,, $/, $\, $^W );
+
+    $, = "";      # output field separator is null string
+    $/ = "\n";    # input record separator is newline
+    $\ = "";      # output record separator is null string
+    $^W = 0;       # warnings are off
+
+    # updating current position
+    my @caller = caller();
+    ($current_package, $current_file_id, $current_line) = @caller[0, 1, 2];
+
+    if (defined $current_file_id)
+    {
+        _report( <<'EOM',
+Calling %s %s
+EOM
+            _format_caller( @caller ),
+            ${^GLOBAL_PHASE} // 'unknown',
+        );
+
+        no strict 'refs';
+        *DB::dbline = *{"::_<$current_file_id"};
+    }
+    else
+    {
+        _dump_stack && _dump_frames && warn "CAN'T FIND CALLER;\n";
+    }
 
     if (my $breakpoint = _get_breakpoint)
     {
@@ -1099,7 +1110,7 @@ sub step_handler
 
         if ($condition && !_eval_expression( $condition )->{result})
         {
-            ($@, $!, $,, $/, $\, $^W) = @saved;
+            ( $@, $!, $^E, $,, $/, $\, $^W ) = @saved;
             $_internal_process = 0;
             return;
         }
@@ -1114,7 +1125,6 @@ sub step_handler
     my $old_db_single = $DB::single;
     $DB::single = STEP_CONTINUE;
 
-
     _report "Step with %s, %s-%s-%s",
         (join ',', @_) // '',
         $DB::trace // 'undef',
@@ -1125,16 +1135,15 @@ sub step_handler
     _report $DB::dbline[$current_line];
     _event_handler( );
 
-    ($@, $!, $,, $/, $\, $^W) = @saved;
     $_internal_process = 0;
-    return;
+    ( $@, $!, $^E, $,, $/, $\, $^W ) = @saved;
+    ();
 }
 
 
 # this pass-through flag handles quotation overload loop
 sub sub_handler
 {
-    @saved = ($@, $!, $,, $/, $\, $^W);
     my $stack_frame;
 
     my $old_db_single = $DB::single;
@@ -1172,7 +1181,6 @@ sub sub_handler
     if ($DB::sub eq 'DESTROY' or substr( $DB::sub, -9 ) eq '::DESTROY' or !defined $wantarray)
     {
         no strict 'refs';
-        ($@, $!, $,, $/, $\, $^W) = @saved;
         &$DB::sub;
 
         if ($stack_frame)
@@ -1189,7 +1197,6 @@ sub sub_handler
     if ($wantarray)
     {
         no strict 'refs';
-        ($@, $!, $,, $/, $\, $^W) = @saved;
         my @result = &$DB::sub;
         if ($stack_frame)
         {
@@ -1204,7 +1211,6 @@ sub sub_handler
     else
     {
         no strict 'refs';
-        ($@, $!, $,, $/, $\, $^W) = @saved;
         my $result = &$DB::sub;
         if ($stack_frame)
         {
@@ -1222,7 +1228,6 @@ sub sub_handler
 # falling back to &DB::sub (args).
 sub lsub_handler: lvalue
 {
-    @saved = ($@, $!, $,, $/, $\, $^W);
     my $stack_frame;
 
     my $old_db_single = $DB::single;
@@ -1249,7 +1254,6 @@ sub lsub_handler: lvalue
 
     {
         no strict 'refs';
-        ($@, $!, $,, $/, $\, $^W) = @saved;
         my $result = &$DB::sub;
         if ($stack_frame)
         {
@@ -1274,7 +1278,6 @@ sub load_handler
 {
     my $old_db_single = $DB::single;
     $DB::single = STEP_CONTINUE;
-    @saved = ($@, $!, $,, $/, $\, $^W);
 
     my $old_internal_process = $_internal_process;
     $_internal_process = 1;
@@ -1294,7 +1297,6 @@ sub load_handler
 
     $_internal_process = $old_internal_process;
 
-    ($@, $!, $,, $/, $\, $^W) = @saved;
     $DB::single = $old_db_single;
 }
 # When execution of the program uses goto to enter a non-XS subroutine and the 0x80 bit is set in $^P , a call to
@@ -1307,8 +1309,6 @@ sub goto_handler
     my $old_db_single = $DB::single;
     $DB::single = STEP_CONTINUE;
 
-    @saved = ($@, $!, $,, $/, $\, $^W);
-
     _report "Goto called%s from %s-%s-%s-%s",
             scalar @_ ? ' with '.(join ',', @_) : '',
         $DB::trace // 'undef',
@@ -1316,7 +1316,6 @@ sub goto_handler
         $old_db_single // 'undef',
         ${^GLOBAL_PHASE} // 'unknown',
     ;
-    ($@, $!, $,, $/, $\, $^W) = @saved;
     $DB::single = $old_db_single;
     $_internal_process = 0;
 }
@@ -1374,9 +1373,6 @@ else
 $_debug_socket->autoflush( 1 );
 print STDERR "Connected.\n";
 
-_report "Set dbline from main\n" if $trace_set_db_line;
-
-_set_dbline();
 push @$_stack_frames, {
         subname      => 'SCRIPT',
         file         => $current_file_id,
