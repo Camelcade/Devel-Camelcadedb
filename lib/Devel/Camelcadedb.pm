@@ -128,11 +128,11 @@ my %_references_cache = ();   # cache of soft references from peek_my
 my @glob_slots = qw/SCALAR ARRAY HASH CODE IO FORMAT/;
 my $glob_slots = join '|', @glob_slots;
 
-my $_dev_mode = 0;          # enable this to get verbose STDERR output from process
+my $_dev_mode = 1;          # enable this to get verbose STDERR output from process
 
 my $_debug_socket;
 my $_debug_packed_address;
-my $_debug_log_fh = *STDERR;
+my $_debug_log_fh;# = *STDERR;
 
 my $coder;  # JSON::XS coder
 my $deparser; # B::Deparse deparser
@@ -174,7 +174,7 @@ sub _report($;@)
         $_debug_log_fh->autoflush( 1 );
     }
 
-    printf $_debug_log_fh "$frame_prefix$message\n", @sprintf_args;
+        printf $_debug_log_fh "$frame_prefix$message\n", map {$_ // 'undef'} @sprintf_args;
 }
 
 sub _format_caller
@@ -240,7 +240,7 @@ sub _dump_frames
     foreach my $frame (@$_stack_frames)
     {
         _report $frame_prefix_step."%s: %s\n", $depth++,
-            join ', ', map $_ // 'undef', @$frame{qw/subname file current_line _single/},
+            join ', ', map $_ // 'undef', @$frame{qw/subname file current_line single/},
                         $frame->{is_use_block} ? '(use block)' : ''
         ;
     }
@@ -658,8 +658,8 @@ sub _event_handler
 
     while()
     {
+        _report "Waiting for input\n";
         local $/ = "\n";
-        _report "Waiting for input %s\n", ord( $/ );
         my $command = <$_debug_socket>;
         die 'Debugging socket disconnected' if !defined $command;
         $command =~ s/[\r\n]+$//;
@@ -705,7 +705,7 @@ sub _event_handler
         {
             foreach my $frame (@{$_stack_frames})
             {
-                $frame->{_single} = STEP_CONTINUE;
+                $frame->{single} = STEP_CONTINUE;
             }
             $DB::single = STEP_CONTINUE;
             return;
@@ -748,7 +748,7 @@ sub _event_handler
             my $current_frame = _get_current_stack_frame;
             if (_is_use_frame( $current_frame ))
             {
-                $current_frame->{_single} = STEP_INTO;
+                $current_frame->{single} = STEP_INTO;
                 $DB::single = STEP_CONTINUE;
             }
             else
@@ -766,7 +766,7 @@ sub _event_handler
             my $current_frame = _get_current_stack_frame;
             if (_is_use_frame( $current_frame ))
             {
-                $current_frame->{_single} = STEP_CONTINUE;
+                $current_frame->{single} = STEP_CONTINUE;
             }
             $DB::single = STEP_CONTINUE;
 
@@ -787,14 +787,11 @@ sub _event_handler
 
 sub _enter_frame
 {
-    my ($args_ref, $old_db_single) = @_;
+    my ($old_db_single) = @_;
 
-    die "Debugging session stopped" unless $_debug_socket;
-
-    _report "Entering frame %s: %s%s %s-%s-%s",
+    _report "Entering frame %s: %s %s-%s-%s",
         scalar @$_stack_frames + 1,
         $DB::sub,
-            scalar @$args_ref ? '('.(join ', ', @$args_ref).')' : '()',
         $DB::trace // 'undef',
         $DB::signal // 'undef',
         $old_db_single // 'undef',
@@ -802,31 +799,9 @@ sub _enter_frame
 
     $frame_prefix = $frame_prefix_step x (scalar @$_stack_frames + 1);
 
-    my $sub_file = '';
-    my $sub_line = 0;
-
-    if ($DB::sub{$DB::sub})
-    {
-        if ($DB::sub{$DB::sub} =~ /^(.+?):(\d+)-(\d+)$/)
-        {
-            $sub_file = $1;
-            $sub_line = $2;
-        }
-        else
-        {
-            _report "  * Unable to parse sub data for %s, %s", $DB::sub, $DB::sub{$DB::sub};
-        }
-    }
-    else
-    {
-        _report"  * Unable to find file data for %s, %s", $DB::sub, ""; #join ', ', keys %DB::sub
-    }
-
     my $new_stack_frame = {
         subname      => $DB::sub,
-        file         => $sub_file,
-        current_line => $sub_line,
-        _single      => $old_db_single,
+        single      => $old_db_single,
     };
     unshift @$_stack_frames, $new_stack_frame;
     return $new_stack_frame;
@@ -837,8 +812,8 @@ sub _exit_frame
 {
     my $frame = shift @$_stack_frames;
     $frame_prefix = $frame_prefix_step x (scalar @$_stack_frames);
-    _report "Leaving frame %s, setting single to %s", (scalar @$_stack_frames + 1), $frame->{_single};
-    $DB::single = $frame->{_single};
+    _report "Leaving frame %s, setting single to %s", (scalar @$_stack_frames + 1), $frame->{single};
+    $DB::single = $frame->{single};
 }
 
 sub _get_normalized_perl_file_id
@@ -1138,7 +1113,7 @@ EOM
 
         foreach my $frame (@{$_stack_frames})
         {
-            $frame->{_single} = STEP_INTO;
+            $frame->{single} = STEP_INTO;
         }
         $DB::single = STEP_INTO;
     }
@@ -1165,7 +1140,7 @@ EOM
 # this pass-through flag handles quotation overload loop
 sub sub_handler
 {
-    my $stack_frame;
+    my $stack_frame = undef;
 
     my $old_db_single = $DB::single;
     if (!$_internal_process)
@@ -1174,7 +1149,7 @@ sub sub_handler
 
         $DB::single = STEP_CONTINUE;
 
-        $stack_frame = _enter_frame( [ @_ ], $old_db_single );
+        $stack_frame = _enter_frame( $old_db_single );
 
         if ($current_package && $current_package eq 'DB')
         {
@@ -1247,46 +1222,46 @@ sub sub_handler
 
 # If the call is to an lvalue subroutine, and &DB::lsub is defined &DB::lsub (args) is called instead, otherwise
 # falling back to &DB::sub (args).
-sub lsub_handler: lvalue
-{
-    my $stack_frame;
-
-    my $old_db_single = $DB::single;
-    if (!$_internal_process)
-    {
-        $_internal_process = 1;
-
-        $DB::single = STEP_CONTINUE;
-        $stack_frame = _enter_frame( [ @_ ], $old_db_single );
-
-        $DB::single = $old_db_single;
-        $_internal_process = 0;
-    }
-
-    if ($DB::single == STEP_OVER)
-    {
-        _report "Disabling step in in subcalls\n";
-        $DB::single = STEP_CONTINUE;
-    }
-    else
-    {
-        _report "Keeping step as %s\n", $old_db_single if $stack_frame;
-    }
-
-    {
-        no strict 'refs';
-        my $result = &$DB::sub;
-        if ($stack_frame)
-        {
-            _exit_frame();
-        }
-        else
-        {
-            $DB::single = $old_db_single;
-        }
-        return $DB::ret = $result;
-    }
-}
+#sub lsub_handler: lvalue
+#{
+#    my $stack_frame = undef;
+#
+#    my $old_db_single = $DB::single;
+#    if (!$_internal_process)
+#    {
+#        $_internal_process = 1;
+#
+#        $DB::single = STEP_CONTINUE;
+#        $stack_frame = _enter_frame( $old_db_single );
+#
+#        $DB::single = $old_db_single;
+#        $_internal_process = 0;
+#    }
+#
+#    if ($DB::single == STEP_OVER)
+#    {
+#        _report "Disabling step in in subcalls\n";
+#        $DB::single = STEP_CONTINUE;
+#    }
+#    else
+#    {
+#        _report "Keeping step as %s\n", $old_db_single if $stack_frame;
+#    }
+#
+#    {
+#        no strict 'refs';
+#        my $result = &$DB::sub;
+#        if ($stack_frame)
+#        {
+#            _exit_frame();
+#        }
+#        else
+#        {
+#            $DB::single = $old_db_single;
+#        }
+#        return $DB::ret = $result;
+#    }
+#}
 
 
 # After each required file is compiled, but before it is executed, DB::postponed(*{"::_<$filename"}) is called if the
@@ -1322,27 +1297,25 @@ sub load_handler
 }
 # When execution of the program uses goto to enter a non-XS subroutine and the 0x80 bit is set in $^P , a call to
 # &DB::goto is made, with $DB::sub holding the name of the subroutine being entered.
-sub goto_handler
-{
-    return if $_internal_process;
-    $_internal_process = 1;
-
-    my $old_db_single = $DB::single;
-    $DB::single = STEP_CONTINUE;
-
-    _report "Goto called%s from %s-%s-%s-%s",
-            scalar @_ ? ' with '.(join ',', @_) : '',
-        $DB::trace // 'undef',
-        $DB::signal // 'undef',
-        $old_db_single // 'undef',
-        ${^GLOBAL_PHASE} // 'unknown',
-    ;
-    $DB::single = $old_db_single;
-    $_internal_process = 0;
-}
-
-
-$^P |= FLAG_REPORT_GOTO;
+#$^P |= FLAG_REPORT_GOTO;
+#sub goto_handler
+#{
+#    return if $_internal_process;
+#    $_internal_process = 1;
+#
+#    my $old_db_single = $DB::single;
+#    $DB::single = STEP_CONTINUE;
+#
+#    _report "Goto called%s from %s-%s-%s-%s",
+#            scalar @_ ? ' with '.(join ',', @_) : '',
+#        $DB::trace // 'undef',
+#        $DB::signal // 'undef',
+#        $old_db_single // 'undef',
+#        ${^GLOBAL_PHASE} // 'unknown',
+#    ;
+#    $DB::single = $old_db_single;
+#    $_internal_process = 0;
+#}
 
 unless ($ENV{PERL5_DEBUG_ROLE} && $ENV{PERL5_DEBUG_HOST} && $ENV{PERL5_DEBUG_PORT})
 {
@@ -1379,7 +1352,7 @@ else
 {
     foreach my $attempt (1 .. 10)
     {
-        printf STDERR "($attempt)Connecting to the IDE at %s:%s...\n", $ENV{PERL5_DEBUG_HOST}, $ENV{PERL5_DEBUG_PORT};
+        printf STDERR "($attempt)Connecting to the IDE from process %s at %s:%s...\n", $$, $ENV{PERL5_DEBUG_HOST}, $ENV{PERL5_DEBUG_PORT};
         $_debug_socket = IO::Socket::INET->new(
             PeerAddr  => $ENV{PERL5_DEBUG_HOST},
             PeerPort  => $ENV{PERL5_DEBUG_PORT},
@@ -1398,16 +1371,10 @@ push @$_stack_frames, {
         subname      => 'SCRIPT',
         file         => $current_file_id,
         current_line => $current_line,
-        _single      => STEP_INTO,
+        single      => STEP_INTO,
     };
 
 _dump_stack && _dump_frames if $trace_code_stack_and_frames;
-
-*DB::DB = \&step_handler;
-*DB::sub = \&sub_handler;
-*DB::lsub = \&lsub_handler;
-*DB::postponed = \&load_handler;
-*DB::goto = \&goto_handler;
 
 $_internal_process = 1;
 
@@ -1442,6 +1409,12 @@ else
 
 $_internal_process = 0;
 $ready_to_go = 1;
+
+*DB::DB = \&step_handler;
+*DB::sub = \&sub_handler;
+#*DB::lsub = \&lsub_handler;
+*DB::postponed = \&load_handler;
+#*DB::goto = \&goto_handler;
 
 $DB::single = STEP_CONTINUE;
 
