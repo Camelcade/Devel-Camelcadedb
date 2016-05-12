@@ -393,10 +393,12 @@ sub _get_reference_descriptor
     if (!$reftype)
     {
         $type = "SCALAR";
+        $value = defined $value ? _escape_scalar( "\"$value\"" ) : 'undef';
+        $key //= 'undef';
     }
     elsif ($reftype eq 'SCALAR')
     {
-        $value = defined $$value ? "'$$value'" : 'undef';
+        $value = defined $$value ? _escape_scalar( "\"$$value\"" ) : 'undef';
     }
     elsif ($reftype eq 'REF')
     {
@@ -459,6 +461,24 @@ sub _get_reference_descriptor
         blessed    => $is_blessed,
         ref_depth  => $ref_depth,
     };
+}
+
+#
+# Making scalar control elements visible, \n\r for now, need cool conception
+#
+my %map = (
+    "\n" => '\n',
+    "\r" => '\r',
+    "\f" => '\f',
+    "\t" => '\t',
+);
+
+sub _escape_scalar
+{
+    my ($scalar) = @_;
+    $scalar =~ s{\\(?=[rnft])}{\\\\}sg;
+    $scalar =~ s/([\r\n\f\t])/$map{$1}/seg;
+    return $scalar;
 }
 
 sub _render_variables
@@ -923,7 +943,7 @@ sub _eval_expression
 {
     my ($expression ) = @_;
 
-    my $expr = "package $current_package;".'( $@, $!, $^E, $,, $/, $\, $^W ) = @DB::saved;'.$expression;
+    my $expr = "no strict; package $current_package;".'( $@, $!, $^E, $,, $/, $\, $^W ) = @DB::saved;'.$expression;
     _report "Running $expr\n";
 
     my $result;

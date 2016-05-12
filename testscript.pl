@@ -18,6 +18,20 @@ my $otherver;
     no strict 'refs';
     $otherver = *{'::^V'}{SCALAR};
 }
+
+my @newlines = (
+    "\n",
+    "text\nab",
+    'text\nab',
+    "text\\n\nab",
+);
+
+my ($var_1, $var_2, $var_3, $var_4) =
+    ("\n",
+        "text\nab",
+        'text\nab',
+        "text\\n\nab",);
+
 my $glob = \*::;
 my $deep_object = \\\\\\\LWP::UserAgent->new();
 my $regexp = qr/something/;
@@ -69,6 +83,11 @@ sub mysub
     foreach my $element (@array)
     {
         say $element;
+    }
+
+    foreach(@array)
+    {
+        say;
     }
 
     $something++;
