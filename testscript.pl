@@ -85,9 +85,11 @@ sub mysub
         say $element;
     }
 
-    foreach(@array)
-    {
-        say;
+    package Some {
+        foreach(@array)
+        {
+            say;
+        }
     }
 
     $something++;
