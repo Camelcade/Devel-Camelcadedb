@@ -9,7 +9,6 @@ use warnings;
 use IO::Socket::INET;
 use PadWalker qw/peek_my peek_our/;
 use Scalar::Util;
-use File::Spec;
 our $VERSION = 1;
 
 #use constant {
@@ -128,7 +127,7 @@ my %_references_cache = ();   # cache of soft references from peek_my
 my @glob_slots = qw/SCALAR ARRAY HASH CODE IO FORMAT/;
 my $glob_slots = join '|', @glob_slots;
 
-my $_dev_mode = 1;          # enable this to get verbose STDERR output from process
+my $_dev_mode = 0;          # enable this to get verbose STDERR output from process
 
 my $_debug_socket;
 my $_debug_packed_address;
@@ -376,6 +375,23 @@ sub _format_variables
     return $result;
 }
 
+sub _safe_utf8
+{
+    my ($value) = @_;
+
+    if( utf8::is_utf8($value))
+    {
+        utf8::downgrade($value);
+    }
+
+    if( $value =~ /[\x80-\xFF]/)
+    {
+        Encode::from_to($value, 'cp1251', 'utf8' );
+    }
+
+    return $value;
+}
+
 sub _get_reference_descriptor
 {
     my ($name, $value) = @_;
@@ -451,9 +467,13 @@ sub _get_reference_descriptor
         $char_code < 32 ? '^'.chr( $char_code + 0x40 ) : $1
         }gsex;
 
+    # handling encoding
+
+
+
     return +{
-        name       => "$name",
-        value      => "$value",
+        name       => _safe_utf8("$name"),
+        value      => _safe_utf8("$value"),
         type       => "$type",
         expandable => $expandable,
         key        => $stringified_key,
@@ -1039,22 +1059,12 @@ sub _calc_real_path
     my $path = shift;
     my $new_filename = shift;
 
-    my $real_path;
-
-    if ($path !~ m{^(/|\w\:)})
+    my $real_path = eval {Cwd::realpath( $path )};
+    if( my $e = $@ )
     {
-        _report "Detecting path for $path\n" if $trace_real_path;
-
-        my $current_dir = Cwd::getcwd();
-
-        $real_path = "$current_dir/$path";
-    }
-    else
-    {
+        _report "Error on getting real path for $path, $e";
         $real_path = $path;
     }
-
-    $real_path = File::Spec->canonpath( $real_path );
     $real_path =~ s{\\}{/}g;
     _report "$new_filename real path is $real_path\n" if $trace_real_path;
     return $real_path;
