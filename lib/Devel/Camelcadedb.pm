@@ -9,7 +9,6 @@ use warnings;
 use IO::Socket::INET;
 use PadWalker qw/peek_my peek_our/;
 use Scalar::Util;
-use File::Spec;
 our $VERSION = 1;
 
 #use constant {
@@ -1060,22 +1059,12 @@ sub _calc_real_path
     my $path = shift;
     my $new_filename = shift;
 
-    my $real_path;
-
-    if ($path !~ m{^(/|\w\:)})
+    my $real_path = eval {Cwd::realpath( $path )};
+    if( my $e = $@ )
     {
-        _report "Detecting path for $path\n" if $trace_real_path;
-
-        my $current_dir = Cwd::getcwd();
-
-        $real_path = "$current_dir/$path";
-    }
-    else
-    {
+        _report "Error on getting real path for $path, $e";
         $real_path = $path;
     }
-
-    $real_path = File::Spec->canonpath( $real_path );
     $real_path =~ s{\\}{/}g;
     _report "$new_filename real path is $real_path\n" if $trace_real_path;
     return $real_path;
