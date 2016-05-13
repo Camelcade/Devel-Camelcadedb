@@ -9,6 +9,7 @@ use warnings;
 use IO::Socket::INET;
 use PadWalker qw/peek_my peek_our/;
 use Scalar::Util;
+use Encode;
 our $VERSION = 1;
 
 #use constant {
@@ -124,14 +125,16 @@ my %_paths_to_perl_file_id_map = (); # maps real paths to _<filename
 my %_loaded_breakpoints = (); # map of loaded breakpoints, set and not in form: path => line => object
 my %_references_cache = ();   # cache of soft references from peek_my
 
+my %_source_been_sent = (); # flags that source been sent
+
 my @glob_slots = qw/SCALAR ARRAY HASH CODE IO FORMAT/;
 my $glob_slots = join '|', @glob_slots;
 
-my $_dev_mode = 0;          # enable this to get verbose STDERR output from process
+my $_dev_mode = 1;          # enable this to get verbose STDERR output from process
+my $_debug_log_fh = *STDERR;
 
 my $_debug_socket;
 my $_debug_packed_address;
-my $_debug_log_fh;# = *STDERR;
 
 my $coder;  # JSON::XS coder
 my $deparser; # B::Deparse deparser
@@ -173,7 +176,7 @@ sub _report($;@)
         $_debug_log_fh->autoflush( 1 );
     }
 
-        printf $_debug_log_fh "$frame_prefix$message\n", map {$_ // 'undef'} @sprintf_args;
+    printf $_debug_log_fh "$frame_prefix$message\n", map {$_ // 'undef'} @sprintf_args;
 }
 
 sub _format_caller
@@ -263,6 +266,31 @@ sub _send_transaction_response
             data          => $data,
         }
     );
+}
+
+sub _get_eval_source_once
+{
+    my ($filename) = @_;
+
+    return undef if $filename !~ /^\(eval \d+/ || $_source_been_sent{$filename};
+    $_source_been_sent{$filename} = 1;
+    {
+        no strict 'refs';
+        _report "Getting source of main::_<$filename";
+        my @lines = @{"main::_<$filename"};
+        return join '', map $_ // '', @lines;
+    }
+}
+
+sub _get_file_source
+{
+    my ($request_serialized_object) = @_;
+    my $transaction_wrapper = _deserialize( $request_serialized_object );
+    my ($transaction_id, $request_object) = @$transaction_wrapper{qw/id data/};
+
+    my $data = "test perl source";
+
+    _send_transaction_response( $transaction_id, $data );
 }
 
 sub _get_reference_subelements
@@ -379,14 +407,14 @@ sub _safe_utf8
 {
     my ($value) = @_;
 
-    if( utf8::is_utf8($value))
+    if (utf8::is_utf8( $value ))
     {
-        utf8::downgrade($value);
+        utf8::downgrade( $value );
     }
 
-    if( $value =~ /[\x80-\xFF]/)
+    if ($value =~ /[\x80-\xFF]/)
     {
-        Encode::from_to($value, 'cp1251', 'utf8' );
+        Encode::from_to( $value, 'cp1251', 'utf8' );
     }
 
     return $value;
@@ -472,8 +500,8 @@ sub _get_reference_descriptor
 
 
     return +{
-        name       => _safe_utf8("$name"),
-        value      => _safe_utf8("$value"),
+        name       => _safe_utf8( "$name" ),
+        value      => _safe_utf8( "$value" ),
         type       => "$type",
         expandable => $expandable,
         key        => $stringified_key,
@@ -620,7 +648,7 @@ sub _calc_stack_frames
 
         if ($package && $package ne 'DB')
         {
-            if (@$frames)
+            if (@$frames && $subroutine ne '(eval)')
             {
                 $frames->[-1]->{name} = $subroutine;
             }
@@ -641,14 +669,20 @@ sub _calc_stack_frames
 
             $frames->[-1]->{args} = _format_variables( \%frame_args ) if scalar @$frames;
 
+            my $real_path = _get_real_path_by_normalized_perl_file_id( $filename );
+            my $name = $real_path;
+
+            $name =~ s/^(\(eval \d+\)).+$/${package}::$1/;
+
             push @$frames, {
-                    file      => _get_real_path_by_normalized_perl_file_id( $filename ),
+                    file      => $real_path,
                     line      => $line - 1,
-                    name      => 'main::',
+                    name      => $name,
                     lexicals  => $lexical_variables,
                     globals   => $global_variables,
                     main_size => scalar keys %::,
-                    args      => [ ]
+                    args      => [ ],
+                    source    => _get_eval_source_once( $real_path ),
                 };
         }
 
@@ -781,6 +815,10 @@ sub _event_handler
         {
             _get_reference_subelements( $1 );
         }
+        elsif ($command =~ /^get_source (.+)$/) # get eval/file source
+        {
+            _get_file_source( $1 );
+        }
         elsif ($command eq 'u') # step out
         {
             my $current_frame = _get_current_stack_frame;
@@ -820,8 +858,8 @@ sub _enter_frame
     $frame_prefix = $frame_prefix_step x (scalar @$_stack_frames + 1);
 
     my $new_stack_frame = {
-        subname      => $DB::sub,
-        single      => $old_db_single,
+        subname => $DB::sub,
+        single  => $old_db_single,
     };
     unshift @$_stack_frames, $new_stack_frame;
     return $new_stack_frame;
@@ -1059,13 +1097,22 @@ sub _calc_real_path
     my $path = shift;
     my $new_filename = shift;
 
-    my $real_path = eval {Cwd::realpath( $path )};
-    if( my $e = $@ )
+    my $real_path;
+    if ($path =~ /^\(eval (\d+)/)
     {
-        _report "Error on getting real path for $path, $e";
         $real_path = $path;
     }
-    $real_path =~ s{\\}{/}g;
+    else
+    {
+        $real_path = eval {Cwd::realpath( $path )};
+        if (my $e = $@)
+        {
+            _report "Error on getting real path for $path, $e";
+            $real_path = $path;
+        }
+        $real_path =~ s{\\}{/}g;
+    }
+
     _report "$new_filename real path is $real_path\n" if $trace_real_path;
     return $real_path;
 }
@@ -1131,11 +1178,14 @@ EOM
     my $old_db_single = $DB::single;
     $DB::single = STEP_CONTINUE;
 
-    _report "Step with %s, %s-%s-%s",
-        (join ',', @_) // '',
+    _report "Step with %s %s %s, %s-%s-%s %s",
+        $current_package // 'undef',
+        $current_file_id // 'undef',
+        $current_line // 'undef',
         $DB::trace // 'undef',
         $DB::signal // 'undef',
         $old_db_single // 'undef',
+        ${^GLOBAL_PHASE}
     ;
 
     _report $DB::dbline[$current_line];
@@ -1362,7 +1412,8 @@ else
 {
     foreach my $attempt (1 .. 10)
     {
-        printf STDERR "($attempt)Connecting to the IDE from process %s at %s:%s...\n", $$, $ENV{PERL5_DEBUG_HOST}, $ENV{PERL5_DEBUG_PORT};
+        printf STDERR "($attempt)Connecting to the IDE from process %s at %s:%s...\n", $$, $ENV{PERL5_DEBUG_HOST},
+            $ENV{PERL5_DEBUG_PORT};
         $_debug_socket = IO::Socket::INET->new(
             PeerAddr  => $ENV{PERL5_DEBUG_HOST},
             PeerPort  => $ENV{PERL5_DEBUG_PORT},
@@ -1381,7 +1432,7 @@ push @$_stack_frames, {
         subname      => 'SCRIPT',
         file         => $current_file_id,
         current_line => $current_line,
-        single      => STEP_INTO,
+        single       => STEP_INTO,
     };
 
 _dump_stack && _dump_frames if $trace_code_stack_and_frames;
