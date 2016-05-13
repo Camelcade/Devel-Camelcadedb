@@ -128,7 +128,7 @@ my %_references_cache = ();   # cache of soft references from peek_my
 my @glob_slots = qw/SCALAR ARRAY HASH CODE IO FORMAT/;
 my $glob_slots = join '|', @glob_slots;
 
-my $_dev_mode = 1;          # enable this to get verbose STDERR output from process
+my $_dev_mode = 0;          # enable this to get verbose STDERR output from process
 
 my $_debug_socket;
 my $_debug_packed_address;
@@ -376,6 +376,23 @@ sub _format_variables
     return $result;
 }
 
+sub _safe_utf8
+{
+    my ($value) = @_;
+
+    if( utf8::is_utf8($value))
+    {
+        utf8::downgrade($value);
+    }
+
+    if( $value =~ /[\x80-\xFF]/)
+    {
+        Encode::from_to($value, 'cp1251', 'utf8' );
+    }
+
+    return $value;
+}
+
 sub _get_reference_descriptor
 {
     my ($name, $value) = @_;
@@ -451,9 +468,13 @@ sub _get_reference_descriptor
         $char_code < 32 ? '^'.chr( $char_code + 0x40 ) : $1
         }gsex;
 
+    # handling encoding
+
+
+
     return +{
-        name       => "$name",
-        value      => "$value",
+        name       => _safe_utf8("$name"),
+        value      => _safe_utf8("$value"),
         type       => "$type",
         expandable => $expandable,
         key        => $stringified_key,
