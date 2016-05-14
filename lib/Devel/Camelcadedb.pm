@@ -672,7 +672,7 @@ sub _calc_stack_frames
             my $real_path = _get_real_path_by_normalized_perl_file_id( $filename );
             my $name = $real_path;
 
-            $name =~ s/^(\(eval \d+\)).+$/${package}::$1/;
+            $name =~ s/^(\(eval \d+\)).+$/$1/;
 
             push @$frames, {
                     file      => $real_path,

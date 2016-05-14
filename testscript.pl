@@ -124,6 +124,8 @@ sub somevalsub()
  {
  print "custompackage sub\n";
  }
+
+print "Sub created";
 WOM
 
 
