@@ -134,12 +134,13 @@ foreach my $element (1 .. 5)
 {
     eval q{
     print "String eval is here\n";
+    somevalsub();
     };
 }
 
 foreach my $element (1 .. 5)
 {
-    custompackage::somevalsub();
+    #    custompackage::somevalsub();
 }
 
 print "Hi there\n";

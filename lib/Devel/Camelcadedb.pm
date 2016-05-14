@@ -126,11 +126,12 @@ my %_loaded_breakpoints = (); # map of loaded breakpoints, set and not in form: 
 my %_references_cache = ();   # cache of soft references from peek_my
 
 my %_source_been_sent = (); # flags that source been sent
+my %_file_name_sent = ();   # flags that idea been notfied about this file loading
 
 my @glob_slots = qw/SCALAR ARRAY HASH CODE IO FORMAT/;
 my $glob_slots = join '|', @glob_slots;
 
-my $_dev_mode = 1;          # enable this to get verbose STDERR output from process
+my $_dev_mode = 0;          # enable this to get verbose STDERR output from process
 my $_debug_log_fh = *STDERR;
 
 my $_debug_socket;
@@ -198,6 +199,50 @@ sub _format_caller
     ;
 }
 
+sub _get_loaded_files_map
+{
+    my %result = ();
+    foreach my $key (keys %::)
+    {
+        my $glob = $::{$key};
+        next unless $key =~ s/^_<//;
+        next unless *$glob{ARRAY} && scalar @{*$glob{ARRAY}};
+        $result{$key} = ${*$glob};
+    }
+    return \%result;
+}
+
+
+sub _send_loaded_files_names
+{
+    my $loaded_files_map = _get_loaded_files_map();
+    my @files_to_add = ();
+    my @files_to_remove = ();
+
+    foreach my $file_id (keys %$loaded_files_map)
+    {
+        next if exists $_file_name_sent{$file_id};
+        $_file_name_sent{$file_id} = 1;
+        push @files_to_add, _get_real_path_by_normalized_perl_file_id( $file_id );
+    }
+
+    foreach my $file_id (keys %_file_name_sent)
+    {
+        next if exists $loaded_files_map->{$file_id};
+        delete $_file_name_sent{$file_id};
+        push @files_to_remove, _get_real_path_by_normalized_perl_file_id( $file_id );
+    }
+
+    if (scalar @files_to_add + scalar @files_to_remove)
+    {
+        _send_event( "LOADED_FILES_DELTA", {
+                add    => \@files_to_add,
+                remove => \@files_to_remove
+            } );
+    }
+}
+
+
 sub _send_event
 {
     my ($name, $data) = @_;
@@ -206,20 +251,6 @@ sub _send_event
             event => $name,
             data  => $data
         } );
-}
-
-sub _get_loaded_files_map
-{
-    my %result = ();
-    foreach(keys %::)
-    {
-        next unless /^_</;
-        next if /\(eval/;
-        my $glob = $::{$_};
-        next unless *$glob{ARRAY} && scalar @{*$glob{ARRAY}};
-        $result{$_} = ${*$glob};
-    }
-    return \%result;
 }
 
 sub _dump_stack
@@ -288,7 +319,21 @@ sub _get_file_source
     my $transaction_wrapper = _deserialize( $request_serialized_object );
     my ($transaction_id, $request_object) = @$transaction_wrapper{qw/id data/};
 
-    my $data = "test perl source";
+    my $file_id = _get_perl_file_id_by_real_path( $request_object->{path} );
+
+    _report "Fetching source for $file_id $request_object->{path}";
+
+    my $glob = $::{"_<$file_id"};
+
+    my $data = 'No source found';
+    if ($glob && *$glob{ARRAY})
+    {
+        $data = join '', @{*$glob{ARRAY}};
+    }
+    else
+    {
+        _report 'No source found...';
+    }
 
     _send_transaction_response( $transaction_id, $data );
 }
@@ -708,6 +753,7 @@ sub _is_use_frame
 
 sub _event_handler
 {
+    _send_loaded_files_names();
     _send_event( "STOP", _calc_stack_frames() );
 
     while()
