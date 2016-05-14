@@ -111,13 +111,34 @@ sub mysub2
 mysub( 123 );
 somethingTestmod();
 
-eval {
-    print "Eval is here\n";
-};
+foreach my $element (1 .. 5)
+{
+    eval {
+        print "Eval is here\n";
+    };
+}
 
-eval q{
+eval <<'WOM';
+package custompackage;
+sub somevalsub()
+ {
+ print "custompackage sub\n";
+ }
+WOM
+
+
+
+foreach my $element (1 .. 5)
+{
+    eval q{
     print "String eval is here\n";
     };
+}
+
+foreach my $element (1 .. 5)
+{
+    custompackage::somevalsub();
+}
 
 print "Hi there\n";
 
