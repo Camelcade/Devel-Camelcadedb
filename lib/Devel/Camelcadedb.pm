@@ -223,7 +223,7 @@ sub _send_loaded_files_names
 
     foreach my $file_id (keys %$loaded_files_map)
     {
-        next if exists $_file_name_sent{$file_id};
+        next if index( $file_id, 'Camelcadedb.pm' ) != -1 || exists $_file_name_sent{$file_id};
         $_file_name_sent{$file_id} = 1;
         push @files_to_add, _get_real_path_by_normalized_perl_file_id( $file_id );
     }
