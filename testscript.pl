@@ -128,13 +128,11 @@ sub somevalsub()
 print "Sub created";
 WOM
 
-
-
 foreach my $element (1 .. 5)
 {
     eval q{
     print "String eval is here\n";
-    somevalsub();
+    custompackage::somevalsub();
     };
 }
 
