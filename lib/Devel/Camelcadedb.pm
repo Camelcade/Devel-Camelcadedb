@@ -1041,8 +1041,36 @@ sub _get_real_path_by_perl_file_id
 
 sub _get_loaded_breakpoints_by_real_path
 {
-    my ($path) = @_;
-    return exists $_loaded_breakpoints{$path} ? $_loaded_breakpoints{$path} : undef;
+    my ($real_path) = @_;
+
+    my $result = {};
+
+    if( $_loaded_breakpoints{$real_path} )
+    {
+        _report "Found real breakpoints";
+        %$result = %{$_loaded_breakpoints{$real_path}};
+    }
+
+    # append breakpoints from templates
+    if( my $substituted_file_descriptor = $_evals_to_templates_map{$real_path})
+    {
+        my ($template_path, $lines_map) = @$substituted_file_descriptor{qw/path lines_map/};
+        _report "Found template file %s", $template_path;
+        if(  my $template_breakpoints = $_loaded_breakpoints{$template_path} )
+        {
+            _report "Found template breakpoints";
+            foreach my $line (keys %$template_breakpoints)
+            {
+                if( my $mapped_line = $lines_map->{$line} )
+                {
+                    _report "Got mapped breakpoint %s => %s", $line, $mapped_line;
+                    $result->{$mapped_line} //= $template_breakpoints->{$line};
+                }
+            }
+        }
+    }
+
+    return scalar keys %$result ? $result: undef;
 }
 
 sub _get_breakpoint
@@ -1096,16 +1124,18 @@ sub _eval_expression
 
 sub _reset_breakpoint
 {
-    my ($real_path, $line, $perl_breakpoints_map) = @_;
+    my ($breakpoint_descriptor, $real_line, $perl_breakpoints_map) = @_;
 
-    if (exists $_loaded_breakpoints{$real_path} && exists $_loaded_breakpoints{$real_path}->{$line})
+    my $real_path = $breakpoint_descriptor->{path};
+
+    if (exists $_loaded_breakpoints{$real_path} && exists $_loaded_breakpoints{$real_path}->{$real_line})
     {
-        delete $_loaded_breakpoints{$real_path}->{$line};
+        delete $_loaded_breakpoints{$real_path}->{$real_line};
     }
 
     if ($perl_breakpoints_map)
     {
-        $perl_breakpoints_map->{$line} = 0;
+        $perl_breakpoints_map->{$real_line} = 0;
     }
 
     return 1;
@@ -1113,21 +1143,21 @@ sub _reset_breakpoint
 
 sub _set_breakpoint
 {
-    my ($real_path, $line, $perl_breakpoints_map, $perl_source_lines) = @_;
+    my ($breakpoint_descriptor, $real_line, $perl_breakpoints_map, $perl_source_lines) = @_;
 
     my $event_data = {
-        path => $real_path,
-        line => $line - 1,
+        path => $breakpoint_descriptor->{path},
+        line => $breakpoint_descriptor->{line} - 1,
     };
 
-    if (defined $perl_source_lines->[$line] && $perl_source_lines->[$line] == 0)
+    if (defined $perl_source_lines->[$real_line] && $perl_source_lines->[$real_line] == 0)
     {
         _send_event( "BREAKPOINT_DENIED", $event_data );
         return 0;
     }
     else
     {
-        $perl_breakpoints_map->{$line} = 1;
+        $perl_breakpoints_map->{$real_line} = 1;
         _send_event( "BREAKPOINT_SET", $event_data );
         return 1;
     }
@@ -1159,48 +1189,45 @@ sub _process_new_breakpoints
 #
 sub _apply_queued_breakpoints
 {
+    return unless $ready_to_go;
     foreach my $file_path (keys %_queued_breakpoints_files)
     {
         _set_break_points_for_file( $file_path );
     }
 }
 
+my $cnt = 0;
 sub _set_break_points_for_file
 {
     my ($real_path) = @_;
 
+    _report "Setting breakpoints for %s", $real_path;
+    my $loaded_breakpoints_descriptors = _get_loaded_breakpoints_by_real_path( $real_path ) or return;
+    my $perl_source_lines = _get_perl_source_lines_by_real_path( $real_path ) or return;
+    my $perl_breakpoints_map = _get_perl_line_breakpoints_map_by_real_path( $real_path ) or return;;
+
     #    print STDERR "Attempting to set breakpoints for $real_path\n";
-    if (
-        (my $loaded_breakpoints_descriptors = _get_loaded_breakpoints_by_real_path( $real_path )) &&
-        (my $perl_breakpoints_map = _get_perl_line_breakpoints_map_by_real_path( $real_path )) &&
-        (my $perl_source_lines = _get_perl_source_lines_by_real_path( $real_path ))
-    )
+    my @lines = keys %$loaded_breakpoints_descriptors;
+    my $breakpoints_left = scalar @lines;
+
+    foreach my $real_line (@lines)
     {
-        my @lines = keys %$loaded_breakpoints_descriptors;
-        my $breakpoints_left = scalar @lines;
+        my $breakpoint_descriptor = $loaded_breakpoints_descriptors->{$real_line};
+        _report "Processing descriptor %s, %s, %s", @$breakpoint_descriptor{qw/path line remove/};
 
-        foreach my $line (@lines)
+        if( $breakpoint_descriptor->{remove})
         {
-            my $breakpoint_descriptor = $loaded_breakpoints_descriptors->{$line};
-
-            if( $breakpoint_descriptor->{remove})
-            {
-                $breakpoints_left -= _reset_breakpoint($real_path, $line, $perl_breakpoints_map);
-            }
-            else
-            {
-                $breakpoints_left -= _set_breakpoint( $real_path, $line, $perl_breakpoints_map, $perl_source_lines );
-            }
+            $breakpoints_left -= _reset_breakpoint($breakpoint_descriptor, $real_line, $perl_breakpoints_map);
         }
-
-        delete $_queued_breakpoints_files{$real_path} unless $breakpoints_left;
-
-        #        print STDERR $breakpoints_left ? "$breakpoints_left breakpoints left\n": "Set\n";
+        else
+        {
+            $breakpoints_left -= _set_breakpoint( $breakpoint_descriptor, $real_line, $perl_breakpoints_map, $perl_source_lines );
+        }
     }
-    #    else
-    #    {
-    #        print STDERR "Failed $loaded_breakpoints-$perl_breakpoints_map-$perl_source_lines\n";
-    #    }
+
+    delete $_queued_breakpoints_files{$real_path} unless $breakpoints_left;
+
+    die if ++$cnt == 100;
 }
 
 sub _calc_real_path
@@ -1358,6 +1385,9 @@ sub template_handler
 
         delete $_file_name_sent{$eval_target}; # forces re-sending file descriptor
         _report "Mapped template: %s to eval %s", $real_path, $eval_target;
+
+        $_queued_breakpoints_files{$eval_target} = 1;
+        _apply_queued_breakpoints();
     }
     else
     {
