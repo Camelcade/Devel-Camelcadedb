@@ -128,6 +128,7 @@ my %_references_cache = ();   # cache of soft references from peek_my
 
 my %_source_been_sent = (); # flags that source been sent
 my %_file_name_sent = ();   # flags that idea been notfied about this file loading
+my %_evals_map = ();        # map of evals to templates or something (see template_handler). Structure: eval => target file
 
 my @glob_slots = qw/SCALAR ARRAY HASH CODE IO FORMAT/;
 my $glob_slots = join '|', @glob_slots;
@@ -136,6 +137,7 @@ my $_dev_mode = 0;                              # enable this to get verbose STD
 my $_debug_log_fh = *STDERR;                    # debug log fh. If omited, file will be created
 my $_debug_log_filename = 'current_debug.log';
 my $_debug_sub_handler = 0;                     # debug entering/leaving subs, works in dev mode
+my $_debug_load_handler = 0;                    # debug modules loading
 
 my $_debug_socket;
 my $_debug_packed_address;
@@ -214,6 +216,32 @@ sub _get_loaded_files_map
     return \%result;
 }
 
+sub _get_file_descriptor_by_id
+{
+    my ($file_id) = @_;
+
+    my $real_path = _get_real_path_by_normalized_perl_file_id( $file_id );
+    my $presentable_name;
+
+    if ($real_path =~ /^\(eval \d+\)/)
+    {
+        my $eval_map_entry = $_evals_map{$real_path};
+        if ($eval_map_entry && $eval_map_entry->{path})
+        {
+            $presentable_name = $eval_map_entry->{path};
+        }
+        #        else
+        #        {
+        #            $presentable_name = $real_path;
+        #            $presentable_name =~ s/^(\(eval \d+\)).+$/$1/;
+        #        }
+    }
+
+    return {
+        path => $real_path,
+        name => $presentable_name,
+    };
+}
 
 sub _send_loaded_files_names
 {
@@ -225,14 +253,14 @@ sub _send_loaded_files_names
     {
         next if index( $file_id, 'Camelcadedb.pm' ) != -1 || exists $_file_name_sent{$file_id};
         $_file_name_sent{$file_id} = 1;
-        push @files_to_add, _get_real_path_by_normalized_perl_file_id( $file_id );
+        push @files_to_add, _get_file_descriptor_by_id( $file_id );
     }
 
     foreach my $file_id (keys %_file_name_sent)
     {
         next if exists $loaded_files_map->{$file_id};
         delete $_file_name_sent{$file_id};
-        push @files_to_remove, _get_real_path_by_normalized_perl_file_id( $file_id );
+        push @files_to_remove, _get_file_descriptor_by_id( $file_id );
     }
 
     if (scalar @files_to_add + scalar @files_to_remove)
@@ -301,22 +329,35 @@ sub _send_transaction_response
     );
 }
 
-sub _get_eval_source_once
+sub _get_file_source_by_file_id
 {
-    my ($filename) = @_;
-
-    return undef if $filename !~ /^\(eval \d+/ || $_source_been_sent{$filename};
-    $_source_been_sent{$filename} = 1;
+    my ($file_id) = @_;
+    $_source_been_sent{$file_id} = 1;
     {
         no strict 'refs';
-        _report "Getting source of main::_<$filename";
-        my @lines = @{"main::_<$filename"};
+        _report "Getting source of main::_<$file_id";
+        my @lines = @{"main::_<$file_id"};
         shift @lines;
         return join '', @lines;
     }
 }
 
-sub _get_file_source
+sub _get_file_source_once_by_file_id
+{
+    my ($file_id) = @_;
+    return if $_source_been_sent{$file_id};
+    return _get_file_source_by_file_id( $file_id );
+}
+
+sub _get_eval_source_once
+{
+    my ($normalized_file_id) = @_;
+
+    return undef if $normalized_file_id !~ /^\(eval \d+/;
+    return _get_file_source_once_by_file_id( $normalized_file_id );
+}
+
+sub _get_file_source_handler
 {
     my ($request_serialized_object) = @_;
     my $transaction_wrapper = _deserialize( $request_serialized_object );
@@ -326,20 +367,10 @@ sub _get_file_source
 
     _report "Fetching source for $file_id $request_object->{path}";
 
-    my $glob = $::{"_<$file_id"};
-
-    my $data = 'No source found';
-    if ($glob && *$glob{ARRAY})
-    {
-        # skipping first undef line
-        $data = join '', @{*$glob{ARRAY}}[1 .. $#{*$glob{ARRAY}}];
-    }
-    else
-    {
-        _report 'No source found...';
-    }
-
-    _send_transaction_response( $transaction_id, $data );
+    _send_transaction_response(
+        $transaction_id,
+        _get_file_source_once_by_file_id( $file_id ) // 'No source found'
+    );
 }
 
 sub _get_reference_subelements
@@ -699,7 +730,7 @@ sub _calc_stack_frames
         {
             if (@$frames && $subroutine ne '(eval)')
             {
-                $frames->[-1]->{name} = $subroutine;
+                $frames->[-1]->{file}->{name} = $subroutine;
             }
 
             my $global_variables = [ ];
@@ -718,20 +749,16 @@ sub _calc_stack_frames
 
             $frames->[-1]->{args} = _format_variables( \%frame_args ) if scalar @$frames;
 
-            my $real_path = _get_real_path_by_normalized_perl_file_id( $filename );
-            my $name = $real_path;
-
-            $name =~ s/^(\(eval \d+\)).+$/$1/;
+            my $descriptor = _get_file_descriptor_by_id( $filename );
 
             push @$frames, {
-                    file      => $real_path,
+                    file      => $descriptor,
                     line      => $line - 1,
-                    name      => $name,
                     lexicals  => $lexical_variables,
                     globals   => $global_variables,
                     main_size => scalar keys %::,
                     args      => [ ],
-                    source    => _get_eval_source_once( $real_path ),
+                    source    => _get_eval_source_once( $descriptor->{path} ),
                 };
         }
 
@@ -767,7 +794,7 @@ sub _event_handler
         my $command = <$_debug_socket>;
         die 'Debugging socket disconnected' if !defined $command;
         $command =~ s/[\r\n]+$//;
-        _report "============> Got command: '$command'\n";
+        _report "============> Got command: '%s'\n", $command;
 
         if ($command eq 'q')
         {
@@ -867,7 +894,7 @@ sub _event_handler
         }
         elsif ($command =~ /^get_source (.+)$/) # get eval/file source
         {
-            _get_file_source( $1 );
+            _get_file_source_handler( $1 );
         }
         elsif ($command eq 'u') # step out
         {
@@ -974,6 +1001,7 @@ sub _get_perl_line_breakpoints_map_by_real_path
 sub _get_perl_source_lines_by_file_id
 {
     my ($file_id) = @_;
+    return unless $file_id;
     my $glob = $::{"_<$file_id"};
     return $glob && *$glob{ARRAY} && scalar @{*$glob{ARRAY}} ? *$glob{ARRAY} : undef;
 }
@@ -1032,7 +1060,7 @@ sub _eval_expression
     my ($expression ) = @_;
 
     my $expr = "no strict; package $current_package;".'( $@, $!, $^E, $,, $/, $\, $^W ) = @DB::saved;'.$expression;
-    _report "Running $expr\n";
+    _report "Running %s\n", $expr;
 
     my $result;
 
@@ -1284,6 +1312,55 @@ EOM
     ();
 }
 
+#
+# This is a hook for templating engines working using perl evals.
+# This hook should be invoked after evaluation of compiled template with template path
+# and map of lines template_line => compiled_source_line
+#
+#    {
+#        no strict 'refs';
+#        my $glob = *{'::DB::template_handler'};
+#
+#        if ($glob && *{$glob}{CODE})
+#        {
+#            *{$glob}{CODE}->($filename, $lines_map);
+#        }
+#    }
+#
+#
+sub template_handler
+{
+    my ($real_path, $lines_map) = @_;
+
+    my $last_eval_id = 0;
+    my $eval_target;
+    foreach my $main_key (keys %::)
+    {
+        if ($main_key =~ /^_<(\(eval (\d+)\).+?)$/)
+        {
+            if ($last_eval_id < $2)
+            {
+                $last_eval_id = $2;
+                $eval_target = $1;
+            }
+        }
+    }
+
+    if ($last_eval_id)
+    {
+        $_evals_map{$eval_target} = {
+            path      => $real_path,
+            lines_map => $lines_map
+        };
+        delete $_file_name_sent{$eval_target}; # forces re-sending file descriptor
+        _report "Mapped template: %s to eval %s", $real_path, $eval_target;
+    }
+    else
+    {
+        _report "Unable to locate top level eval for %s", $real_path;
+    }
+}
+
 
 # this pass-through flag handles quotation overload loop
 sub sub_handler
@@ -1435,6 +1512,7 @@ sub load_handler
         $DB::trace // 'undef',
         $DB::signal // 'undef',
         $old_db_single // 'undef',
+        if $_debug_load_handler
     ;
 
     _set_break_points_for_file( $real_path ) if $ready_to_go; # this is necessary, because perl internally re-initialize bp hash
