@@ -128,7 +128,8 @@ my %_references_cache = ();   # cache of soft references from peek_my
 
 my %_source_been_sent = (); # flags that source been sent
 my %_file_name_sent = ();   # flags that idea been notfied about this file loading
-my %_evals_map = ();        # map of evals to templates or something (see template_handler). Structure: eval => target file
+my %_evals_to_templates_map = ();        # map of evals to templates or something (see template_handler). Structure: eval => target file
+my %_templates_to_evals_map = ();        # map of templates to evals or something (see template_handler). Structure: template => [eval1, eval2, ...]
 
 my @glob_slots = qw/SCALAR ARRAY HASH CODE IO FORMAT/;
 my $glob_slots = join '|', @glob_slots;
@@ -223,18 +224,18 @@ sub _get_file_descriptor_by_id
     my $real_path = _get_real_path_by_normalized_perl_file_id( $file_id );
     my $presentable_name;
 
-    if ($real_path =~ /^\(eval \d+\)/)
+    if( $real_path =~ /^\(eval \d+\)/)
     {
-        my $eval_map_entry = $_evals_map{$real_path};
-        if ($eval_map_entry && $eval_map_entry->{path})
+        my $eval_map_entry = $_evals_to_templates_map{$real_path};
+        if( $eval_map_entry && $eval_map_entry->{path})
         {
             $presentable_name = $eval_map_entry->{path};
         }
-        #        else
-        #        {
-        #            $presentable_name = $real_path;
-        #            $presentable_name =~ s/^(\(eval \d+\)).+$/$1/;
-        #        }
+#        else
+#        {
+#            $presentable_name = $real_path;
+#            $presentable_name =~ s/^(\(eval \d+\)).+$/$1/;
+#        }
     }
 
     return {
@@ -253,14 +254,14 @@ sub _send_loaded_files_names
     {
         next if index( $file_id, 'Camelcadedb.pm' ) != -1 || exists $_file_name_sent{$file_id};
         $_file_name_sent{$file_id} = 1;
-        push @files_to_add, _get_file_descriptor_by_id( $file_id );
+        push @files_to_add, _get_file_descriptor_by_id($file_id);
     }
 
     foreach my $file_id (keys %_file_name_sent)
     {
         next if exists $loaded_files_map->{$file_id};
         delete $_file_name_sent{$file_id};
-        push @files_to_remove, _get_file_descriptor_by_id( $file_id );
+        push @files_to_remove, _get_file_descriptor_by_id($file_id);
     }
 
     if (scalar @files_to_add + scalar @files_to_remove)
@@ -346,7 +347,7 @@ sub _get_file_source_once_by_file_id
 {
     my ($file_id) = @_;
     return if $_source_been_sent{$file_id};
-    return _get_file_source_by_file_id( $file_id );
+    return _get_file_source_by_file_id($file_id);
 }
 
 sub _get_eval_source_once
@@ -354,7 +355,7 @@ sub _get_eval_source_once
     my ($normalized_file_id) = @_;
 
     return undef if $normalized_file_id !~ /^\(eval \d+/;
-    return _get_file_source_once_by_file_id( $normalized_file_id );
+    return _get_file_source_once_by_file_id($normalized_file_id);
 }
 
 sub _get_file_source_handler
@@ -369,7 +370,7 @@ sub _get_file_source_handler
 
     _send_transaction_response(
         $transaction_id,
-        _get_file_source_once_by_file_id( $file_id ) // 'No source found'
+        _get_file_source_once_by_file_id($file_id) // 'No source found'
     );
 }
 
@@ -517,12 +518,12 @@ sub _get_reference_descriptor
     if (!$reftype)
     {
         $type = "SCALAR";
-        $value = defined $value ? _escape_scalar( "\"$value\"" ) : 'undef';
+        $value = defined $value ? "\"$value\"" : 'undef'; #_escape_scalar(
         $key //= 'undef';
     }
     elsif ($reftype eq 'SCALAR')
     {
-        $value = defined $$value ? _escape_scalar( "\"$$value\"" ) : 'undef';
+        $value = defined $$value ? "\"$$value\"" : 'undef'; #_escape_scalar(
     }
     elsif ($reftype eq 'REF')
     {
@@ -566,11 +567,11 @@ sub _get_reference_descriptor
     $name = "$name";
     $value = "$value";
 
-    $name =~ s{(.)}{
+    $name =~ s{([^\n\r\f\t])}{
         $char_code = ord( $1 );
         $char_code < 32 ? '^'.chr( $char_code + 0x40 ) : $1
         }gsex;
-    $value =~ s{(.)}{
+    $value =~ s{([^\n\r\f\t])}{
         $char_code = ord( $1 );
         $char_code < 32 ? '^'.chr( $char_code + 0x40 ) : $1
         }gsex;
@@ -749,7 +750,7 @@ sub _calc_stack_frames
 
             $frames->[-1]->{args} = _format_variables( \%frame_args ) if scalar @$frames;
 
-            my $descriptor = _get_file_descriptor_by_id( $filename );
+            my $descriptor = _get_file_descriptor_by_id($filename);
 
             push @$frames, {
                     file      => $descriptor,
@@ -1093,23 +1094,40 @@ sub _eval_expression
     return $result;
 }
 
+sub _reset_breakpoint
+{
+    my ($real_path, $line, $perl_breakpoints_map) = @_;
+
+    if (exists $_loaded_breakpoints{$real_path} && exists $_loaded_breakpoints{$real_path}->{$line})
+    {
+        delete $_loaded_breakpoints{$real_path}->{$line};
+    }
+
+    if ($perl_breakpoints_map)
+    {
+        $perl_breakpoints_map->{$line} = 0;
+    }
+
+    return 1;
+}
+
 sub _set_breakpoint
 {
-    my ($path, $line, $source_lines, $breakpoints_map) = @_;
+    my ($real_path, $line, $perl_breakpoints_map, $perl_source_lines) = @_;
 
     my $event_data = {
-        path => $path,
+        path => $real_path,
         line => $line - 1,
     };
 
-    if (defined $source_lines->[$line] && $source_lines->[$line] == 0)
+    if (defined $perl_source_lines->[$line] && $perl_source_lines->[$line] == 0)
     {
         _send_event( "BREAKPOINT_DENIED", $event_data );
         return 0;
     }
     else
     {
-        $breakpoints_map->{$line} = 1;
+        $perl_breakpoints_map->{$line} = 1;
         _send_event( "BREAKPOINT_SET", $event_data );
         return 1;
     }
@@ -1129,41 +1147,11 @@ sub _process_new_breakpoints
                 $descriptor->{remove} ? 'remove' : 'set';
 
         my ($real_path, $line) = @$descriptor{qw/path line/};
-
-        if ($descriptor->{remove}) # removing from loaded and set
-        {
-            if (exists $_loaded_breakpoints{$real_path} && exists $_loaded_breakpoints{$real_path}->{$line})
-            {
-                delete $_loaded_breakpoints{$real_path}->{$line};
-            }
-
-            if (my $breakpoints_map = _get_perl_line_breakpoints_map_by_real_path( $real_path ))
-            {
-                $breakpoints_map->{$line} = 0;
-            }
-        }
-        else # add to loaded and set
-        {
-            $_loaded_breakpoints{$real_path} //= { };
-            $_loaded_breakpoints{$real_path}->{$line} = $descriptor;
-            my $success = 0;
-            my $breakpoints_map = _get_perl_line_breakpoints_map_by_real_path( $real_path );
-            my $source_lines = _get_perl_source_lines_by_real_path( $real_path );
-
-            if ($breakpoints_map && $source_lines)
-            {
-                $success = _set_breakpoint( $real_path, $line, $source_lines, $breakpoints_map );
-            }
-
-            unless ($success)
-            {
-                $_queued_breakpoints_files{$real_path} = 1;
-                _report "Queue breakpoints for: Path: %s, Breakpoints map %s; Source lines: %s", $real_path,
-                    $breakpoints_map, $source_lines;
-            }
-        }
-        # suppose is not loaded
+        $_loaded_breakpoints{$real_path} //= { };
+        $_loaded_breakpoints{$real_path}->{$line} = $descriptor;
+        $_queued_breakpoints_files{$real_path} = 1;
     }
+    _apply_queued_breakpoints();
 }
 
 #
@@ -1182,17 +1170,27 @@ sub _set_break_points_for_file
     my ($real_path) = @_;
 
     #    print STDERR "Attempting to set breakpoints for $real_path\n";
-    if (( my $loaded_breakpoints = _get_loaded_breakpoints_by_real_path( $real_path )) &&
+    if (
+        (my $loaded_breakpoints_descriptors = _get_loaded_breakpoints_by_real_path( $real_path )) &&
         (my $perl_breakpoints_map = _get_perl_line_breakpoints_map_by_real_path( $real_path )) &&
         (my $perl_source_lines = _get_perl_source_lines_by_real_path( $real_path ))
     )
     {
-        my @lines = keys %$loaded_breakpoints;
+        my @lines = keys %$loaded_breakpoints_descriptors;
         my $breakpoints_left = scalar @lines;
 
         foreach my $line (@lines)
         {
-            $breakpoints_left -= _set_breakpoint( $real_path, $line, $perl_source_lines, $perl_breakpoints_map );
+            my $breakpoint_descriptor = $loaded_breakpoints_descriptors->{$line};
+
+            if( $breakpoint_descriptor->{remove})
+            {
+                $breakpoints_left -= _reset_breakpoint($real_path, $line, $perl_breakpoints_map);
+            }
+            else
+            {
+                $breakpoints_left -= _set_breakpoint( $real_path, $line, $perl_breakpoints_map, $perl_source_lines );
+            }
         }
 
         delete $_queued_breakpoints_files{$real_path} unless $breakpoints_left;
@@ -1336,9 +1334,9 @@ sub template_handler
     my $eval_target;
     foreach my $main_key (keys %::)
     {
-        if ($main_key =~ /^_<(\(eval (\d+)\).+?)$/)
+        if( $main_key =~ /^_<(\(eval (\d+)\).+?)$/)
         {
-            if ($last_eval_id < $2)
+            if( $last_eval_id < $2 )
             {
                 $last_eval_id = $2;
                 $eval_target = $1;
@@ -1346,12 +1344,18 @@ sub template_handler
         }
     }
 
-    if ($last_eval_id)
+    if( $last_eval_id )
     {
-        $_evals_map{$eval_target} = {
-            path      => $real_path,
+        $_evals_to_templates_map{$eval_target} = {
+            path => $real_path,
             lines_map => $lines_map
         };
+        $_templates_to_evals_map{$real_path} //= {
+            lines_map => $lines_map,
+            evals => []
+        };
+        push @{$_templates_to_evals_map{$real_path}->{evals}}, $eval_target;
+
         delete $_file_name_sent{$eval_target}; # forces re-sending file descriptor
         _report "Mapped template: %s to eval %s", $real_path, $eval_target;
     }
@@ -1512,7 +1516,7 @@ sub load_handler
         $DB::trace // 'undef',
         $DB::signal // 'undef',
         $old_db_single // 'undef',
-        if $_debug_load_handler
+        if( $_debug_load_handler)
     ;
 
     _set_break_points_for_file( $real_path ) if $ready_to_go; # this is necessary, because perl internally re-initialize bp hash
