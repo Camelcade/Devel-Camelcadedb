@@ -1650,18 +1650,19 @@ foreach my $main_key (keys %::)
 }
 
 _send_event( "READY" );
-_report "Waiting for breakpoints...";
-my $breakpoints_data = <$_debug_socket>;
-die "Connection closed" unless (defined $breakpoints_data);
 
-if ($breakpoints_data =~ /^b (.+)$/s)
-{
-    _process_new_breakpoints( $1 );
-}
-else
-{
-    _report "Incorrect breakpoints data: %s", $breakpoints_data;
-}
+#_report "Waiting for breakpoints...";
+#my $breakpoints_data = <$_debug_socket>;
+#die "Connection closed" unless (defined $breakpoints_data);
+#
+#if ($breakpoints_data =~ /^b (.+)$/s)
+#{
+#    _process_new_breakpoints( $1 );
+#}
+#else
+#{
+#    _report "Incorrect breakpoints data: %s", $breakpoints_data;
+#}
 
 $_internal_process = 0;
 $ready_to_go = 1;
