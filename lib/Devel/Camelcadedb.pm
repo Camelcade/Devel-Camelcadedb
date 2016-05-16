@@ -1249,6 +1249,16 @@ sub _calc_real_path
     return $real_path;
 }
 
+my @scheduled_files = ();
+sub _register_delayed_breakpoints
+{
+    while (my $path = shift @scheduled_files)
+    {
+        _set_break_points_for_file( $path ); # this is necessary, because perl internally re-initialize bp hash
+    }
+
+}
+
 
 # When the execution of your program reaches a point that can hold a breakpoint, the DB::DB() subroutine is called if
 # any of the variables $DB::trace , $DB::single , or $DB::signal is true. These variables are not localizable. This
@@ -1269,7 +1279,11 @@ sub step_handler
     $^W = 0;      # warnings are off
 
     # set breakpoints for evals if any appeared
-    _apply_queued_breakpoints() if ($ready_to_go);
+    if ($ready_to_go)
+    {
+        _register_delayed_breakpoints();
+        _apply_queued_breakpoints();
+    }
 
     # updating current position
     my @caller = caller();
@@ -1411,6 +1425,8 @@ sub sub_handler
             die;
         }
 
+        _register_delayed_breakpoints();
+
         $DB::single = $old_db_single;
         $_internal_process = 0;
     }
@@ -1523,7 +1539,6 @@ sub sub_handler
 #
 # After each subroutine subname is compiled, the existence of $DB::postponed{subname} is checked. If this key exists,
 # DB::postponed(subname) is called if the DB::postponed subroutine also exists.
-my @scheduled_files = ();
 sub load_handler
 {
     my $old_db_single = $DB::single;
@@ -1546,11 +1561,8 @@ sub load_handler
 
     if ($ready_to_go)
     {
-        while (my $path = shift @scheduled_files)
-        {
-            _set_break_points_for_file( $path ); # this is necessary, because perl internally re-initialize bp hash
-        }
-        _set_break_points_for_file( $real_path );
+        _register_delayed_breakpoints();
+        #        _set_break_points_for_file( $real_path );
         push @scheduled_files, $real_path;  # 5.18.2 bug
 
         _apply_queued_breakpoints();
