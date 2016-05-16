@@ -172,7 +172,7 @@ sub _dump
 
 sub _report($;@)
 {
-    return unless $_dev_mode;
+    return unless ($_dev_mode);
     my ($message, @sprintf_args) = @_;
     chomp $message;
 
@@ -210,8 +210,8 @@ sub _get_loaded_files_map
     foreach my $key (keys %::)
     {
         my $glob = $::{$key};
-        next unless $key =~ s/^_<//;
-        next unless *$glob{ARRAY} && scalar @{*$glob{ARRAY}};
+        next unless ($key =~ s/^_<//);
+        next unless (*$glob{ARRAY} && scalar @{*$glob{ARRAY}});
         $result{$key} = ${*$glob};
     }
     return \%result;
@@ -224,18 +224,18 @@ sub _get_file_descriptor_by_id
     my $real_path = _get_real_path_by_normalized_perl_file_id( $file_id );
     my $presentable_name;
 
-    if( $real_path =~ /^\(eval \d+\)/)
+    if ($real_path =~ /^\(eval \d+\)/)
     {
         my $eval_map_entry = $_evals_to_templates_map{$real_path};
-        if( $eval_map_entry && $eval_map_entry->{path})
+        if ($eval_map_entry && $eval_map_entry->{path})
         {
             $presentable_name = $eval_map_entry->{path};
         }
-#        else
-#        {
-#            $presentable_name = $real_path;
-#            $presentable_name =~ s/^(\(eval \d+\)).+$/$1/;
-#        }
+        #        else
+        #        {
+        #            $presentable_name = $real_path;
+        #            $presentable_name =~ s/^(\(eval \d+\)).+$/$1/;
+        #        }
     }
 
     return {
@@ -252,16 +252,16 @@ sub _send_loaded_files_names
 
     foreach my $file_id (keys %$loaded_files_map)
     {
-        next if index( $file_id, 'Camelcadedb.pm' ) != -1 || exists $_file_name_sent{$file_id};
+        next if (index( $file_id, 'Camelcadedb.pm' ) != -1 || exists $_file_name_sent{$file_id});
         $_file_name_sent{$file_id} = 1;
-        push @files_to_add, _get_file_descriptor_by_id($file_id);
+        push @files_to_add, _get_file_descriptor_by_id( $file_id );
     }
 
     foreach my $file_id (keys %_file_name_sent)
     {
-        next if exists $loaded_files_map->{$file_id};
+        next if (exists $loaded_files_map->{$file_id});
         delete $_file_name_sent{$file_id};
-        push @files_to_remove, _get_file_descriptor_by_id($file_id);
+        push @files_to_remove, _get_file_descriptor_by_id( $file_id );
     }
 
     if (scalar @files_to_add + scalar @files_to_remove)
@@ -291,7 +291,7 @@ sub _dump_stack
     while()
     {
         my @caller = caller( $depth );
-        last unless defined $caller[2];
+        last unless (defined $caller[2]);
         _report $frame_prefix_step."%s: %s\n", $depth++, _format_caller( @caller );
     }
     1;
@@ -346,16 +346,16 @@ sub _get_file_source_by_file_id
 sub _get_file_source_once_by_file_id
 {
     my ($file_id) = @_;
-    return if $_source_been_sent{$file_id};
-    return _get_file_source_by_file_id($file_id);
+    return if ($_source_been_sent{$file_id});
+    return _get_file_source_by_file_id( $file_id );
 }
 
 sub _get_eval_source_once
 {
     my ($normalized_file_id) = @_;
 
-    return undef if $normalized_file_id !~ /^\(eval \d+/;
-    return _get_file_source_once_by_file_id($normalized_file_id);
+    return undef if ($normalized_file_id !~ /^\(eval \d+/);
+    return _get_file_source_once_by_file_id( $normalized_file_id );
 }
 
 sub _get_file_source_handler
@@ -370,7 +370,7 @@ sub _get_file_source_handler
 
     _send_transaction_response(
         $transaction_id,
-        _get_file_source_once_by_file_id($file_id) // 'No source found'
+        _get_file_source_once_by_file_id( $file_id ) // 'No source found'
     );
 }
 
@@ -442,7 +442,7 @@ sub _get_reference_subelements
             foreach my $glob_slot (@glob_slots)
             {
                 my $reference = *$source_data{$glob_slot};
-                next unless $reference;
+                next unless ($reference);
                 my $desciptor = _get_reference_descriptor( $glob_slot, \$reference );
 
                 # hack for DB namespace, see https://github.com/hurricup/Perl5-IDEA/issues/1151
@@ -725,7 +725,7 @@ sub _calc_stack_frames
         my $cnt = 0;
         my %frame_args = map{ '$_['.$cnt++.']' => $_ } @DB::args;
 
-        last unless defined $filename;
+        last unless (defined $filename);
 
         if ($package && $package ne 'DB')
         {
@@ -748,9 +748,9 @@ sub _calc_stack_frames
                 $lexical_variables = _format_variables( $variables_hash );
             }
 
-            $frames->[-1]->{args} = _format_variables( \%frame_args ) if scalar @$frames;
+            $frames->[-1]->{args} = _format_variables( \%frame_args ) if (scalar @$frames);
 
-            my $descriptor = _get_file_descriptor_by_id($filename);
+            my $descriptor = _get_file_descriptor_by_id( $filename );
 
             push @$frames, {
                     file      => $descriptor,
@@ -793,7 +793,7 @@ sub _event_handler
         _report "Waiting for input\n";
         local $/ = "\n";
         my $command = <$_debug_socket>;
-        die 'Debugging socket disconnected' if !defined $command;
+        die 'Debugging socket disconnected' if (!defined $command);
         $command =~ s/[\r\n]+$//;
         _report "============> Got command: '%s'\n", $command;
 
@@ -931,7 +931,7 @@ sub _enter_frame
         $DB::trace // 'undef',
         $DB::signal // 'undef',
         $old_db_single // 'undef',
-        if $_debug_sub_handler;
+        if ($_debug_sub_handler);
 
     $frame_prefix = $frame_prefix_step x (scalar @$_stack_frames + 1);
 
@@ -940,7 +940,7 @@ sub _enter_frame
         single  => $old_db_single,
     };
     unshift @$_stack_frames, $new_stack_frame;
-    _apply_queued_breakpoints() if $ready_to_go;
+    _apply_queued_breakpoints() if ($ready_to_go);
     return $new_stack_frame;
 }
 
@@ -950,8 +950,8 @@ sub _exit_frame
     my $frame = shift @$_stack_frames;
     $frame_prefix = $frame_prefix_step x (scalar @$_stack_frames);
     _report "Leaving frame %s, setting single to %s", (scalar @$_stack_frames + 1),
-        $frame->{single} if $_debug_sub_handler;
-    _apply_queued_breakpoints() if $ready_to_go;
+        $frame->{single} if ($_debug_sub_handler);
+    _apply_queued_breakpoints() if ($ready_to_go);
     $DB::single = $frame->{single};
 }
 
@@ -973,7 +973,7 @@ sub _get_perl_file_id_by_real_path
 {
     my ($path) = @_;
 
-    return $path if $path =~ /^\(eval \d+\)/;
+    return $path if ($path =~ /^\(eval \d+\)/);
     return exists $_paths_to_perl_file_id_map{$path} ? $_paths_to_perl_file_id_map{$path} : undef;
 }
 
@@ -1002,7 +1002,7 @@ sub _get_perl_line_breakpoints_map_by_real_path
 sub _get_perl_source_lines_by_file_id
 {
     my ($file_id) = @_;
-    return unless $file_id;
+    return unless ($file_id);
     my $glob = $::{"_<$file_id"};
     return $glob && *$glob{ARRAY} && scalar @{*$glob{ARRAY}} ? *$glob{ARRAY} : undef;
 }
@@ -1043,25 +1043,25 @@ sub _get_loaded_breakpoints_by_real_path
 {
     my ($real_path) = @_;
 
-    my $result = {};
+    my $result = { };
 
-    if( $_loaded_breakpoints{$real_path} )
+    if ($_loaded_breakpoints{$real_path})
     {
         _report "Found real breakpoints";
         %$result = %{$_loaded_breakpoints{$real_path}};
     }
 
     # append breakpoints from templates
-    if( my $substituted_file_descriptor = $_evals_to_templates_map{$real_path})
+    if (my $substituted_file_descriptor = $_evals_to_templates_map{$real_path})
     {
         my ($template_path, $lines_map) = @$substituted_file_descriptor{qw/path lines_map/};
         _report "Found template file %s", $template_path;
-        if(  my $template_breakpoints = $_loaded_breakpoints{$template_path} )
+        if (my $template_breakpoints = $_loaded_breakpoints{$template_path})
         {
             _report "Found template breakpoints";
             foreach my $line (keys %$template_breakpoints)
             {
-                if( my $mapped_line = $lines_map->{$line} )
+                if (my $mapped_line = $lines_map->{$line})
                 {
                     _report "Got mapped breakpoint %s => %s", $line, $mapped_line;
                     $result->{$mapped_line} //= $template_breakpoints->{$line};
@@ -1070,12 +1070,12 @@ sub _get_loaded_breakpoints_by_real_path
         }
     }
 
-    return scalar keys %$result ? $result: undef;
+    return scalar keys %$result ? $result : undef;
 }
 
 sub _get_breakpoint
 {
-    return if $DB::single || $DB::signal;
+    return if ($DB::single || $DB::signal);
     my $loaded_breakpoints = _get_loaded_breakpoints_by_real_path( _get_real_path_by_normalized_perl_file_id( $current_file_id ) );
     if ($loaded_breakpoints && $loaded_breakpoints->{$current_line})
     {
@@ -1189,7 +1189,7 @@ sub _process_new_breakpoints
 #
 sub _apply_queued_breakpoints
 {
-    return unless $ready_to_go;
+    return unless ($ready_to_go);
     foreach my $file_path (keys %_queued_breakpoints_files)
     {
         _set_break_points_for_file( $file_path );
@@ -1215,19 +1215,20 @@ sub _set_break_points_for_file
         my $breakpoint_descriptor = $loaded_breakpoints_descriptors->{$real_line};
         _report "Processing descriptor %s, %s, %s", @$breakpoint_descriptor{qw/path line remove/};
 
-        if( $breakpoint_descriptor->{remove})
+        if ($breakpoint_descriptor->{remove})
         {
-            $breakpoints_left -= _reset_breakpoint($breakpoint_descriptor, $real_line, $perl_breakpoints_map);
+            $breakpoints_left -= _reset_breakpoint( $breakpoint_descriptor, $real_line, $perl_breakpoints_map );
         }
         else
         {
-            $breakpoints_left -= _set_breakpoint( $breakpoint_descriptor, $real_line, $perl_breakpoints_map, $perl_source_lines );
+            $breakpoints_left -= _set_breakpoint( $breakpoint_descriptor, $real_line, $perl_breakpoints_map,
+                $perl_source_lines );
         }
     }
 
-    delete $_queued_breakpoints_files{$real_path} unless $breakpoints_left;
+    delete $_queued_breakpoints_files{$real_path} unless ($breakpoints_left);
 
-    die if ++$cnt == 100;
+    die if (++$cnt == 100);
 }
 
 sub _calc_real_path
@@ -1251,7 +1252,7 @@ sub _calc_real_path
         $real_path =~ s{\\}{/}g;
     }
 
-    _report "$new_filename real path is $real_path\n" if $trace_real_path;
+    _report "$new_filename real path is $real_path\n" if ($trace_real_path);
     return $real_path;
 }
 
@@ -1261,7 +1262,7 @@ sub _calc_real_path
 # feature is disabled when executing inside DB::DB() , including functions called from it unless $^D & (1<<30) is true.
 sub step_handler
 {
-    return if $_internal_process;
+    return if ($_internal_process);
     $_internal_process = 1;
 
     # Save eval failure, command failure, extended OS error, output field
@@ -1275,7 +1276,7 @@ sub step_handler
     $^W = 0;      # warnings are off
 
     # set breakpoints for evals if any appeared
-    _apply_queued_breakpoints() if $ready_to_go;
+    _apply_queued_breakpoints() if ($ready_to_go);
 
     # updating current position
     my @caller = caller();
@@ -1361,9 +1362,9 @@ sub template_handler
     my $eval_target;
     foreach my $main_key (keys %::)
     {
-        if( $main_key =~ /^_<(\(eval (\d+)\).+?)$/)
+        if ($main_key =~ /^_<(\(eval (\d+)\).+?)$/)
         {
-            if( $last_eval_id < $2 )
+            if ($last_eval_id < $2)
             {
                 $last_eval_id = $2;
                 $eval_target = $1;
@@ -1371,15 +1372,15 @@ sub template_handler
         }
     }
 
-    if( $last_eval_id )
+    if ($last_eval_id)
     {
         $_evals_to_templates_map{$eval_target} = {
-            path => $real_path,
+            path      => $real_path,
             lines_map => $lines_map
         };
         $_templates_to_evals_map{$real_path} //= {
             lines_map => $lines_map,
-            evals => []
+            evals     => [ ]
         };
         push @{$_templates_to_evals_map{$real_path}->{evals}}, $eval_target;
 
@@ -1425,12 +1426,12 @@ sub sub_handler
 
     if ($DB::single == STEP_OVER)
     {
-        _report "Disabling step in in subcalls\n" if $_debug_sub_handler;
+        _report "Disabling step in in subcalls\n" if ($_debug_sub_handler);
         $DB::single = STEP_CONTINUE;
     }
     else
     {
-        _report "Keeping step as %s\n", $old_db_single if $stack_frame && $_debug_sub_handler;
+        _report "Keeping step as %s\n", $old_db_single if ($stack_frame && $_debug_sub_handler);
     }
 
     if ($DB::sub eq 'DESTROY' or substr( $DB::sub, -9 ) eq '::DESTROY' or !defined $wantarray)
@@ -1546,11 +1547,11 @@ sub load_handler
         $DB::trace // 'undef',
         $DB::signal // 'undef',
         $old_db_single // 'undef',
-        if( $_debug_load_handler)
+        if ( $_debug_load_handler)
     ;
 
-    _set_break_points_for_file( $real_path ) if $ready_to_go; # this is necessary, because perl internally re-initialize bp hash
-    _apply_queued_breakpoints() if $ready_to_go;
+    _set_break_points_for_file( $real_path ) if ($ready_to_go); # this is necessary, because perl internally re-initialize bp hash
+    _apply_queued_breakpoints() if ($ready_to_go);
 
     $_internal_process = $old_internal_process;
 
@@ -1621,10 +1622,10 @@ else
             ReuseAddr => 1,
             Proto     => 'tcp',
         );
-        last if $_debug_socket;
+        last if ($_debug_socket);
         sleep( 1 ); # this is kinda hacky
     }
-    die "Error connecting to $ENV{PERL5_DEBUG_HOST}:$ENV{PERL5_DEBUG_PORT}" unless $_debug_socket;
+    die "Error connecting to $ENV{PERL5_DEBUG_HOST}:$ENV{PERL5_DEBUG_PORT}" unless ($_debug_socket);
 }
 $_debug_socket->autoflush( 1 );
 print STDERR "Connected.\n";
@@ -1636,7 +1637,7 @@ push @$_stack_frames, {
         single       => STEP_INTO,
     };
 
-_dump_stack && _dump_frames if $trace_code_stack_and_frames;
+_dump_stack && _dump_frames if ($trace_code_stack_and_frames);
 
 $_internal_process = 1;
 
@@ -1658,7 +1659,7 @@ foreach my $main_key (keys %::)
 _send_event( "READY" );
 _report "Waiting for breakpoints...";
 my $breakpoints_data = <$_debug_socket>;
-die "Connection closed" unless defined $breakpoints_data;
+die "Connection closed" unless (defined $breakpoints_data);
 
 if ($breakpoints_data =~ /^b (.+)$/s)
 {
