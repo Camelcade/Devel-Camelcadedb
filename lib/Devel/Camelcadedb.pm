@@ -1153,6 +1153,7 @@ sub _set_breakpoint
     }
     else
     {
+        $perl_breakpoints_map->{$real_line} = 0;
         $perl_breakpoints_map->{$real_line} = 1;
         _send_event( "BREAKPOINT_SET", $event_data );
         return 1;
