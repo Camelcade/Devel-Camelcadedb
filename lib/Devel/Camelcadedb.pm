@@ -52,7 +52,7 @@ sub STEP_OVER() {2;}
 
 # Each array @{"::_<$filename"} holds the lines of $filename for a file compiled by Perl. The same is also true for evaled
 # strings that contain subroutines, or which are currently being executed. The $filename for evaled strings looks like
-# (eval 34) .
+# (eval 34)
 # Values in this array are magical in numeric context: they compare equal to zero only if the line is not breakable.
 #
 # # @DB::dbline is an alias for @{"::_<current_file"} , which holds the lines of the currently-selected file (compiled by
