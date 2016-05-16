@@ -362,7 +362,7 @@ sub _get_file_source_handler
 
     _send_transaction_response(
         $transaction_id,
-        _get_file_source_once_by_file_id( $file_id ) // 'No source found for '.$file_id
+        _get_file_source_once_by_file_id( $file_id ) // '# No source found for '.$file_id
     );
 }
 
