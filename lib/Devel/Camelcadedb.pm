@@ -1523,6 +1523,7 @@ sub sub_handler
 #
 # After each subroutine subname is compiled, the existence of $DB::postponed{subname} is checked. If this key exists,
 # DB::postponed(subname) is called if the DB::postponed subroutine also exists.
+my @scheduled_files = ();
 sub load_handler
 {
     my $old_db_single = $DB::single;
@@ -1543,8 +1544,17 @@ sub load_handler
         if ( $_debug_load_handler)
     ;
 
-    _set_break_points_for_file( $real_path ) if ($ready_to_go); # this is necessary, because perl internally re-initialize bp hash
-    _apply_queued_breakpoints() if ($ready_to_go);
+    if ($ready_to_go)
+    {
+        while (my $path = shift @scheduled_files)
+        {
+            _set_break_points_for_file( $path ); # this is necessary, because perl internally re-initialize bp hash
+        }
+        _set_break_points_for_file( $real_path );
+        push @scheduled_files, $real_path;  # 5.18.2 bug
+
+        _apply_queued_breakpoints();
+    }
 
     $_internal_process = $old_internal_process;
 
