@@ -1564,12 +1564,11 @@ sub load_handler
         _register_delayed_breakpoints();
         #        _set_break_points_for_file( $real_path );
         push @scheduled_files, $real_path;  # 5.18.2 bug
-
         _apply_queued_breakpoints();
     }
 
+    _report 'Finished loading %s', $perl_file_id;
     $_internal_process = $old_internal_process;
-
     $DB::single = $old_db_single;
 }
 # When execution of the program uses goto to enter a non-XS subroutine and the 0x80 bit is set in $^P , a call to
