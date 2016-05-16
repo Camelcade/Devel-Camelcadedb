@@ -350,14 +350,6 @@ sub _get_file_source_once_by_file_id
     return _get_file_source_by_file_id( $file_id );
 }
 
-sub _get_eval_source_once
-{
-    my ($normalized_file_id) = @_;
-
-    return undef if ($normalized_file_id !~ /^\(eval \d+/);
-    return _get_file_source_once_by_file_id( $normalized_file_id );
-}
-
 sub _get_file_source_handler
 {
     my ($request_serialized_object) = @_;
@@ -370,7 +362,7 @@ sub _get_file_source_handler
 
     _send_transaction_response(
         $transaction_id,
-        _get_file_source_once_by_file_id( $file_id ) // 'No source found'
+        _get_file_source_once_by_file_id( $file_id ) // 'No source found for '.$file_id
     );
 }
 
@@ -759,7 +751,6 @@ sub _calc_stack_frames
                     globals   => $global_variables,
                     main_size => scalar keys %::,
                     args      => [ ],
-                    source    => _get_eval_source_once( $descriptor->{path} ),
                 };
         }
 
