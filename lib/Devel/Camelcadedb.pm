@@ -52,7 +52,7 @@ sub STEP_OVER() {2;}
 
 # Each array @{"::_<$filename"} holds the lines of $filename for a file compiled by Perl. The same is also true for evaled
 # strings that contain subroutines, or which are currently being executed. The $filename for evaled strings looks like
-# (eval 34)
+# (eval 34) .
 # Values in this array are magical in numeric context: they compare equal to zero only if the line is not breakable.
 #
 # # @DB::dbline is an alias for @{"::_<current_file"} , which holds the lines of the currently-selected file (compiled by
@@ -1153,7 +1153,6 @@ sub _set_breakpoint
     }
     else
     {
-        $perl_breakpoints_map->{$real_line} = 0;
         $perl_breakpoints_map->{$real_line} = 1;
         _send_event( "BREAKPOINT_SET", $event_data );
         return 1;
@@ -1250,18 +1249,8 @@ sub _calc_real_path
     return $real_path;
 }
 
-my @scheduled_files = ();
-sub _register_delayed_breakpoints
-{
-    while (my $path = shift @scheduled_files)
-    {
-        _set_break_points_for_file( $path ); # this is necessary, because perl internally re-initialize bp hash
-    }
 
-}
-
-
-# When the execution of your program reaches a point that can hold a breakpoint, the DB::DB() subroutine is called if
+# When the execution of  your program reaches a point that can hold a breakpoint, the DB::DB() subroutine is called if
 # any of the variables $DB::trace , $DB::single , or $DB::signal is true. These variables are not localizable. This
 # feature is disabled when executing inside DB::DB() , including functions called from it unless $^D & (1<<30) is true.
 sub step_handler
@@ -1280,11 +1269,7 @@ sub step_handler
     $^W = 0;      # warnings are off
 
     # set breakpoints for evals if any appeared
-    if ($ready_to_go)
-    {
-        _register_delayed_breakpoints();
-        _apply_queued_breakpoints();
-    }
+    _apply_queued_breakpoints() if $ready_to_go;
 
     # updating current position
     my @caller = caller();
@@ -1426,8 +1411,6 @@ sub sub_handler
             die;
         }
 
-        _register_delayed_breakpoints();
-
         $DB::single = $old_db_single;
         $_internal_process = 0;
     }
@@ -1560,16 +1543,11 @@ sub load_handler
         if ( $_debug_load_handler)
     ;
 
-    if ($ready_to_go)
-    {
-        _register_delayed_breakpoints();
-        #        _set_break_points_for_file( $real_path );
-        push @scheduled_files, $real_path;  # 5.18.2 bug
-        _apply_queued_breakpoints();
-    }
+    _set_break_points_for_file( $real_path ) if $ready_to_go; # this is necessary, because perl internally re-initialize bp hash
+    _apply_queued_breakpoints() if $ready_to_go;
 
-    _report 'Finished loading %s', $perl_file_id;
     $_internal_process = $old_internal_process;
+
     $DB::single = $old_db_single;
 }
 # When execution of the program uses goto to enter a non-XS subroutine and the 0x80 bit is set in $^P , a call to
