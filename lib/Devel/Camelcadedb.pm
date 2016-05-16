@@ -1143,7 +1143,10 @@ sub _set_breakpoint
         line => $breakpoint_descriptor->{line} - 1,
     };
 
-    if (defined $perl_source_lines->[$real_line] && $perl_source_lines->[$real_line] == 0)
+    _report 'Setting breakpoint to %s, real line %s, %s', $breakpoint_descriptor->{path}, $real_line,
+        $perl_source_lines->[$real_line];
+
+    if (!defined $perl_source_lines->[$real_line] || $perl_source_lines->[$real_line] == 0)
     {
         _send_event( "BREAKPOINT_DENIED", $event_data );
         return 0;
