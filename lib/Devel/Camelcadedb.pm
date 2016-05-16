@@ -947,12 +947,14 @@ sub _enter_frame
 
 sub _exit_frame
 {
+    $_internal_process = 1;
     my $frame = shift @$_stack_frames;
     $frame_prefix = $frame_prefix_step x (scalar @$_stack_frames);
     _report "Leaving frame %s, setting single to %s", (scalar @$_stack_frames + 1),
         $frame->{single} if ($_debug_sub_handler);
     _apply_queued_breakpoints() if ($ready_to_go);
     $DB::single = $frame->{single};
+    $_internal_process = 0;
 }
 
 sub _get_normalized_perl_file_id
@@ -1088,7 +1090,7 @@ sub _eval_expression
 {
     my ($expression ) = @_;
 
-    my $expr = "no strict; package $current_package;".'( $@, $!, $^E, $,, $/, $\, $^W ) = @DB::saved;'.$expression;
+    my $expr = "no strict; package $current_package;".'( $@, $!, $^E, $,, $/, $\, $^W ) = @DB::saved;'."$expression";
     _report "Running %s\n", $expr;
 
     my $result;
@@ -1196,7 +1198,6 @@ sub _apply_queued_breakpoints
     }
 }
 
-my $cnt = 0;
 sub _set_break_points_for_file
 {
     my ($real_path) = @_;
@@ -1227,8 +1228,6 @@ sub _set_break_points_for_file
     }
 
     delete $_queued_breakpoints_files{$real_path} unless ($breakpoints_left);
-
-    die if (++$cnt == 100);
 }
 
 sub _calc_real_path
