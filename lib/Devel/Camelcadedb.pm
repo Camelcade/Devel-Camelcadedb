@@ -1199,7 +1199,9 @@ sub _set_break_points_for_file
     _report "Setting breakpoints for %s", $real_path;
     my $loaded_breakpoints_descriptors = _get_loaded_breakpoints_by_real_path( $real_path ) or return;
     my $perl_source_lines = _get_perl_source_lines_by_real_path( $real_path ) or return;
-    my $perl_breakpoints_map = _get_perl_line_breakpoints_map_by_real_path( $real_path ) or return;;
+    my $perl_breakpoints_map = _get_perl_line_breakpoints_map_by_real_path( $real_path ) or return;
+    my $perl_file_id = _get_perl_file_id_by_real_path( $real_path );
+    my $old_context = _switch_context( $perl_file_id );
 
     #    print STDERR "Attempting to set breakpoints for $real_path\n";
     my @lines = keys %$loaded_breakpoints_descriptors;
@@ -1222,6 +1224,7 @@ sub _set_break_points_for_file
     }
 
     delete $_queued_breakpoints_files{$real_path} unless ($breakpoints_left);
+    _switch_context( $old_context );
 }
 
 sub _calc_real_path
@@ -1247,6 +1250,16 @@ sub _calc_real_path
 
     _report "$new_filename real path is $real_path\n" if ($trace_real_path);
     return $real_path;
+}
+
+sub _switch_context
+{
+    my ($context_key) = @_;
+    $context_key =~ s/^_<//;
+    no strict 'refs';
+    my $current_context = $DB::dbline;
+    *DB::dbline = *{"::_<$context_key"};
+    return $current_context;
 }
 
 
@@ -1283,9 +1296,7 @@ EOM
             _format_caller( @caller ),
             ${^GLOBAL_PHASE} // 'unknown',
         );
-
-        no strict 'refs';
-        *DB::dbline = *{"::_<$current_file_id"};
+        _switch_context( $current_file_id );
     }
     else
     {
