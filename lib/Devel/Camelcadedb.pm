@@ -287,12 +287,12 @@ sub _send_event
 sub _dump_stack
 {
     my $depth = 0;
-    _report "Stack trace:\n";
+    _report "Stack trace:\n" if $_dev_mode;
     while()
     {
         my @caller = caller( $depth );
         last unless (defined $caller[2]);
-        _report $frame_prefix_step."%s: %s\n", $depth++, _format_caller( @caller );
+        _report $frame_prefix_step."%s: %s\n", $depth++, _format_caller( @caller ) if $_dev_mode;
     }
     1;
 }
@@ -300,13 +300,13 @@ sub _dump_stack
 sub _dump_frames
 {
     my $depth = 0;
-    _report "Frames trace:\n";
+    _report "Frames trace:\n" if $_dev_mode;
     foreach my $frame (@$_stack_frames)
     {
         _report $frame_prefix_step."%s: %s\n", $depth++,
             join ', ', map $_ // 'undef', @$frame{qw/subname file current_line single/},
                         $frame->{is_use_block} ? '(use block)' : ''
-        ;
+            if $_dev_mode;
     }
     1;
 }
@@ -336,7 +336,7 @@ sub _get_file_source_by_file_id
     $_source_been_sent{$file_id} = 1;
     {
         no strict 'refs';
-        _report "Getting source of main::_<$file_id";
+        _report "Getting source of main::_<$file_id" if $_dev_mode;
         my @lines = @{"main::_<$file_id"};
         shift @lines;
         return join '', @lines;
@@ -358,7 +358,7 @@ sub _get_file_source_handler
 
     my $file_id = _get_perl_file_id_by_real_path( $request_object->{path} );
 
-    _report "Fetching source for $file_id $request_object->{path}";
+    _report "Fetching source for $file_id $request_object->{path}" if $_dev_mode;
 
     _send_transaction_response(
         $transaction_id,
@@ -390,7 +390,7 @@ sub _get_reference_subelements
             $source_data = \*{$name};
         }
 
-        _report "Got glob ref $key => $source_data";
+        _report "Got glob ref $key => $source_data" if $_dev_mode;
     }
     else
     {
@@ -450,13 +450,13 @@ sub _get_reference_subelements
         }
         else
         {
-            _report "Dont know how to iterate $reftype";
+            _report "Dont know how to iterate $reftype" if $_dev_mode;
         }
 
     }
     else
     {
-        _report "No source data for $key\n";
+        _report "No source data for $key\n" if $_dev_mode;
     }
 
     _send_transaction_response( $transaction_id, $data );
@@ -671,7 +671,7 @@ sub _send_string_to_debugger
     my ($string) = @_;
     $string .= "\n";
     print $_debug_socket $string;
-    _report "Sent to debugger: %s", $string;
+    _report "Sent to debugger: %s", $string if $_dev_mode;
 }
 
 sub _get_adjusted_line_number
@@ -781,16 +781,16 @@ sub _event_handler
 
     while()
     {
-        _report "Waiting for input\n";
+        _report "Waiting for input\n" if $_dev_mode;
         local $/ = "\n";
         my $command = <$_debug_socket>;
         die 'Debugging socket disconnected' if (!defined $command);
         $command =~ s/[\r\n]+$//;
-        _report "============> Got command: '%s'\n", $command;
+        _report "============> Got command: '%s'\n", $command if $_dev_mode;
 
         if ($command eq 'q')
         {
-            _report "Exiting";
+            _report "Exiting" if $_dev_mode;
             exit;
         }
         elsif ($command eq 'l') # list
@@ -799,12 +799,12 @@ sub _event_handler
             {
                 my $src = $DB::dbline[$i] // '';
                 chomp $src;
-                _report "%s: %s (%s)\n", $i, $src, $DB::dbline[$i] == 0 ? 'unbreakable' : 'breakable';
+                _report "%s: %s (%s)\n", $i, $src, $DB::dbline[$i] == 0 ? 'unbreakable' : 'breakable' if $_dev_mode;
             }
         }
         elsif ($command eq 's') # dump %sub
         {
-            _report _dump( \%DB::sub );
+            _report _dump( \%DB::sub ) if $_dev_mode;
         }
         elsif ($command =~ /^e\s+(.+)$/) # eval expresion
         {
@@ -818,11 +818,11 @@ sub _event_handler
 
             _send_transaction_response( $transaction_id, $result );
 
-            _report "Result is $result\n";
+            _report "Result is $result\n" if $_dev_mode;
         }
         elsif ($command eq 'f') # dump keys of %DB::dbline
         {
-            _report _dump( \%_perl_file_id_to_path_map );
+            _report _dump( \%_perl_file_id_to_path_map ) if $_dev_mode;
         }
         elsif ($command eq 'g')
         {
@@ -842,19 +842,19 @@ sub _event_handler
             my $line = $1;
             if ($DB::dbline[$line] == 0)
             {
-                _report "Line $line is unbreakable, try another one\n";
+                _report "Line $line is unbreakable, try another one\n" if $_dev_mode;
             }
             else
             {
                 if ($DB::dbline{$line})
                 {
                     $DB::dbline{$line} = 0;
-                    _report "Removed breakpoint from line $line\n";
+                    _report "Removed breakpoint from line $line\n" if $_dev_mode;
                 }
                 else
                 {
                     $DB::dbline{$line} = 1;
-                    _report "Added breakpoint to line $line\n";
+                    _report "Added breakpoint to line $line\n" if $_dev_mode;
                 }
             }
         }
@@ -864,7 +864,7 @@ sub _event_handler
         }
         elsif ($command eq 'v') # show variables
         {
-            _report "Lexical variables:\n%s", _render_variables( peek_my( 2 ) );
+            _report "Lexical variables:\n%s", _render_variables( peek_my( 2 ) ) if $_dev_mode;
         }
         elsif ($command eq 'o') # over,
         {
@@ -922,7 +922,7 @@ sub _enter_frame
         $DB::trace // 'undef',
         $DB::signal // 'undef',
         $old_db_single // 'undef',
-        if ($_debug_sub_handler);
+        if $_debug_sub_handler && $_dev_mode;
 
     $frame_prefix = $frame_prefix_step x (scalar @$_stack_frames + 1);
 
@@ -942,7 +942,7 @@ sub _exit_frame
     my $frame = shift @$_stack_frames;
     $frame_prefix = $frame_prefix_step x (scalar @$_stack_frames);
     _report "Leaving frame %s, setting single to %s", (scalar @$_stack_frames + 1),
-        $frame->{single} if ($_debug_sub_handler);
+        $frame->{single} if $_debug_sub_handler && $_dev_mode;
     _apply_queued_breakpoints() if ($ready_to_go);
     $DB::single = $frame->{single};
     $_internal_process = 0;
@@ -1040,7 +1040,7 @@ sub _get_loaded_breakpoints_by_real_path
 
     if ($_loaded_breakpoints{$real_path})
     {
-        _report "Found real breakpoints";
+        _report "Found real breakpoints" if $_dev_mode;
         %$result = %{$_loaded_breakpoints{$real_path}};
     }
 
@@ -1048,15 +1048,15 @@ sub _get_loaded_breakpoints_by_real_path
     if (my $substituted_file_descriptor = $_evals_to_templates_map{$real_path})
     {
         my ($template_path, $lines_map) = @$substituted_file_descriptor{qw/path lines_map/};
-        _report "Found template file %s", $template_path;
+        _report "Found template file %s", $template_path if $_dev_mode;
         if (my $template_breakpoints = $_loaded_breakpoints{$template_path})
         {
-            _report "Found template breakpoints";
+            _report "Found template breakpoints" if $_dev_mode;
             foreach my $line (keys %$template_breakpoints)
             {
                 if (my $mapped_line = $lines_map->{$line})
                 {
-                    _report "Got mapped breakpoint %s => %s", $line, $mapped_line;
+                    _report "Got mapped breakpoint %s => %s", $line, $mapped_line if $_dev_mode;
                     $result->{$mapped_line} //= $template_breakpoints->{$line};
                 }
             }
@@ -1082,7 +1082,7 @@ sub _eval_expression
     my ($expression ) = @_;
 
     my $expr = "no strict; package $current_package;".'( $@, $!, $^E, $,, $/, $\, $^W ) = @DB::saved;'."$expression";
-    _report "Running %s\n", $expr;
+    _report "Running %s\n", $expr if $_dev_mode;
 
     my $result;
 
@@ -1144,7 +1144,7 @@ sub _set_breakpoint
     };
 
     _report 'Setting breakpoint to %s, real line %s, %s', $breakpoint_descriptor->{path}, $real_line,
-        $perl_source_lines->[$real_line];
+        $perl_source_lines->[$real_line] if $_dev_mode;
 
     if (!defined $perl_source_lines->[$real_line] || $perl_source_lines->[$real_line] == 0)
     {
@@ -1163,14 +1163,14 @@ sub _process_new_breakpoints
 {
     my ($json_data) = @_;
     my $descriptors = _deserialize( $json_data );
-    _report "Processing breakpoints: %s", $json_data;
+    _report "Processing breakpoints: %s", $json_data if $_dev_mode;
 
     foreach my $descriptor (@$descriptors)
     {
         $descriptor->{line}++;
 
         _report "Processing descriptor: %s %s %s", $descriptor->{path}, $descriptor->{line},
-                $descriptor->{remove} ? 'remove' : 'set';
+                $descriptor->{remove} ? 'remove' : 'set' if $_dev_mode;
 
         my ($real_path, $line) = @$descriptor{qw/path line/};
         $_loaded_breakpoints{$real_path} //= { };
@@ -1196,7 +1196,7 @@ sub _set_break_points_for_file
 {
     my ($real_path) = @_;
 
-    _report "Setting breakpoints for %s", $real_path;
+    _report "Setting breakpoints for %s", $real_path if $_dev_mode;
     my $loaded_breakpoints_descriptors = _get_loaded_breakpoints_by_real_path( $real_path ) or return;
     my $perl_source_lines = _get_perl_source_lines_by_real_path( $real_path ) or return;
     my $perl_breakpoints_map = _get_perl_line_breakpoints_map_by_real_path( $real_path ) or return;
@@ -1210,7 +1210,7 @@ sub _set_break_points_for_file
     foreach my $real_line (@lines)
     {
         my $breakpoint_descriptor = $loaded_breakpoints_descriptors->{$real_line};
-        _report "Processing descriptor %s, %s, %s", @$breakpoint_descriptor{qw/path line remove/};
+        _report "Processing descriptor %s, %s, %s", @$breakpoint_descriptor{qw/path line remove/} if $_dev_mode;
 
         if ($breakpoint_descriptor->{remove})
         {
@@ -1242,13 +1242,13 @@ sub _calc_real_path
         $real_path = eval {Cwd::realpath( $path )};
         if (my $e = $@)
         {
-            _report "Error on getting real path for $path, $e";
+            _report "Error on getting real path for $path, $e" if $_dev_mode;
             $real_path = $path;
         }
         $real_path =~ s{\\}{/}g;
     }
 
-    _report "$new_filename real path is $real_path\n" if ($trace_real_path);
+    _report "$new_filename real path is $real_path\n" if $trace_real_path && $_dev_mode;
     return $real_path;
 }
 
@@ -1296,7 +1296,7 @@ Calling %s %s
 EOM
             _format_caller( @caller ),
             ${^GLOBAL_PHASE} // 'unknown',
-        );
+        ) if $_dev_mode;
         _switch_context( $current_file_id );
     }
     else
@@ -1333,9 +1333,9 @@ EOM
         $DB::signal // 'undef',
         $old_db_single // 'undef',
         ${^GLOBAL_PHASE}
-    ;
+        if $_dev_mode;
 
-    _report $DB::dbline[$current_line];
+    _report $DB::dbline[$current_line] if $_dev_mode;
     _event_handler( );
 
     $_internal_process = 0;
@@ -1390,14 +1390,14 @@ sub template_handler
         push @{$_templates_to_evals_map{$real_path}->{evals}}, $eval_target;
 
         delete $_file_name_sent{$eval_target}; # forces re-sending file descriptor
-        _report "Mapped template: %s to eval %s", $real_path, $eval_target;
+        _report "Mapped template: %s to eval %s", $real_path, $eval_target if $_dev_mode;
 
         $_queued_breakpoints_files{$eval_target} = 1;
         _apply_queued_breakpoints();
     }
     else
     {
-        _report "Unable to locate top level eval for %s", $real_path;
+        _report "Unable to locate top level eval for %s", $real_path if $_dev_mode;
     }
 }
 
@@ -1418,7 +1418,7 @@ sub sub_handler
 
         if ($current_package && $current_package eq 'DB')
         {
-            _report "PANIC: Catched internal call";
+            _report "PANIC: Catched internal call" if $_dev_mode;
             _dump_stack && _dump_frames();
             die;
         }
@@ -1431,12 +1431,12 @@ sub sub_handler
 
     if ($DB::single == STEP_OVER)
     {
-        _report "Disabling step in in subcalls\n" if ($_debug_sub_handler);
+        _report "Disabling step in in subcalls\n" if $_debug_sub_handler && $_dev_mode;
         $DB::single = STEP_CONTINUE;
     }
     else
     {
-        _report "Keeping step as %s\n", $old_db_single if ($stack_frame && $_debug_sub_handler);
+        _report "Keeping step as %s\n", $old_db_single if $stack_frame && $_debug_sub_handler && $_dev_mode;
     }
 
     if ($DB::sub eq 'DESTROY' or substr( $DB::sub, -9 ) eq '::DESTROY' or !defined $wantarray)
@@ -1505,12 +1505,12 @@ sub sub_handler
 #
 #    if ($DB::single == STEP_OVER)
 #    {
-#        _report "Disabling step in in subcalls\n";
+#        _report "Disabling step in in subcalls\n" if $_dev_mode;
 #        $DB::single = STEP_CONTINUE;
 #    }
 #    else
 #    {
-#        _report "Keeping step as %s\n", $old_db_single if $stack_frame;
+#        _report "Keeping step as %s\n", $old_db_single if $stack_frame if $_dev_mode;
 #    }
 #
 #    {
@@ -1552,7 +1552,7 @@ sub load_handler
         $DB::trace // 'undef',
         $DB::signal // 'undef',
         $old_db_single // 'undef',
-        if ( $_debug_load_handler)
+        if ( $_debug_load_handler && $_dev_mode)
     ;
 
     _set_break_points_for_file( $real_path ) if $ready_to_go; # this is necessary, because perl internally re-initialize bp hash
@@ -1579,7 +1579,7 @@ sub load_handler
 #        $DB::signal // 'undef',
 #        $old_db_single // 'undef',
 #        ${^GLOBAL_PHASE} // 'unknown',
-#    ;
+#     if $_dev_mode;
 #    $DB::single = $old_db_single;
 #    $_internal_process = 0;
 #}
@@ -1663,7 +1663,7 @@ foreach my $main_key (keys %::)
 
 _send_event( "READY" );
 
-_report "Waiting for breakpoints...";
+_report "Waiting for breakpoints..." if $_dev_mode;
 my $breakpoints_data = <$_debug_socket>;
 die "Connection closed" unless defined $breakpoints_data;
 
@@ -1673,7 +1673,7 @@ if ($breakpoints_data =~ /^b (.+)$/s)
 }
 else
 {
-    _report "Incorrect breakpoints data: %s", $breakpoints_data;
+    _report "Incorrect breakpoints data: %s", $breakpoints_data if $_dev_mode;
 }
 
 $_internal_process = 0;
