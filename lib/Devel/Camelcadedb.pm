@@ -12,43 +12,12 @@ use Scalar::Util;
 use Encode;
 our $VERSION = 1;
 
-#use constant {
-#    FLAG_SUB_ENTER_EXIT         => 0x01,
-#    FLAG_LINE_BY_LINE           => 0x02,
-#    FLAG_OPTIMIZATIONS_OFF      => 0x04,
-#    FLAG_MORE_DATA              => 0x08,
-#    FLAG_SOURCE_LINES           => 0x10,
-#    FLAG_SINGLE_STEP_ON         => 0x20,
-#    FLAG_USE_SUB_ADDRESS        => 0x40,
-#    FLAG_REPORT_GOTO            => 0x80,
-#    FLAG_EVAL_FILENAMES         => 0x100,
-#    FLAG_ANON_FILENAMES         => 0x200,
-#    FLAG_STORE_SOURCES          => 0x400,
-#    FLAG_KEEP_SUBLESS_EVALS     => 0x800,
-#    FLAG_KEEP_UNCOMPILED_SOURCE => 0x1000,
-#    FLAGS_DESCRIPTIVE_NAMES     => [
-#        q{Debug subroutine enter/exit.},
-#        q{Line-by-line debugging. Causes DB::DB() subroutine to be called for each statement executed. Also causes saving source code lines (like 0x400).}
-#        ,
-#        q{Switch off optimizations.},
-#        q{Preserve more data for future interactive inspections.},
-#        q{Keep info about source lines on which a subroutine is defined.},
-#        q{Start with single-step on.},
-#        q{Use subroutine address instead of name when reporting.},
-#        q{Report goto &subroutine as well.},
-#        q{Provide informative "file" names for evals based on the place they were compiled.},
-#        q{Provide informative names to anonymous subroutines based on the place they were compiled.},
-#        q{Save source code lines into @{"::_<$filename"}.},
-#        q{When saving source, include evals that generate no subroutines.},
-#        q{When saving source, include source that did not compile.},
-#    ],
-#};
-
-sub FLAG_REPORT_GOTO() {0x80;}
+#sub FLAG_REPORT_GOTO() {0x80;}
 
 sub STEP_CONTINUE() {0;}
 sub STEP_INTO() {1;}
 sub STEP_OVER() {2;}
+
 
 # Each array @{"::_<$filename"} holds the lines of $filename for a file compiled by Perl. The same is also true for evaled
 # strings that contain subroutines, or which are currently being executed. The $filename for evaled strings looks like
@@ -339,7 +308,7 @@ sub _get_file_source_by_file_id
         _report "Getting source of main::_<$file_id" if $_dev_mode;
         my @lines = @{"main::_<$file_id"};
         shift @lines;
-        return join '', @lines;
+        return _safe_utf8( join '', @lines );
     }
 }
 
