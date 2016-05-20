@@ -32,6 +32,11 @@ my ($var_1, $var_2, $var_3, $var_4) =
         'text\nab',
         "text\\n\nab",);
 
+my $rus_words = 'Привет!';
+my $rus_utf_words = $rus_words;
+Encode::from_to( $rus_utf_words, 'cp1251', 'utf8' );
+utf8::decode( $rus_utf_words );
+
 my $glob = \*::;
 my $deep_object = \\\\\\\LWP::UserAgent->new();
 my $regexp = qr/something/;

@@ -109,6 +109,8 @@ my $_debug_log_filename = 'current_debug.log';
 my $_debug_sub_handler = 0;                     # debug entering/leaving subs, works in dev mode
 my $_debug_load_handler = 0;                    # debug modules loading
 
+my $_script_charset = 'utf8';   # all sources and strings without utf flag will be encoded from this encoding to the utf
+
 my $_debug_socket;
 my $_debug_packed_address;
 
@@ -308,7 +310,7 @@ sub _get_file_source_by_file_id
         _report "Getting source of main::_<$file_id" if $_dev_mode;
         my @lines = @{"main::_<$file_id"};
         shift @lines;
-        return _safe_utf8( join '', @lines );
+        return _to_utf8( join '', @lines );
     }
 }
 
@@ -434,6 +436,7 @@ sub _get_reference_subelements
 sub _format_variables
 {
     my ($vars_hash) = @_;
+
     my $result = [ ];
 
     foreach my $variable (sort keys %$vars_hash)
@@ -445,18 +448,37 @@ sub _format_variables
     return $result;
 }
 
-sub _safe_utf8
+sub _to_utf8
 {
     my ($value) = @_;
 
-    if (utf8::is_utf8( $value ))
+    return $value unless $value;
+
+    if (utf8::is_utf8( $value )) # if values is marked as utf8
     {
-        utf8::downgrade( $value );
+        utf8::encode( $value ); # we just making octets from it
+    }
+    elsif ($value =~ /[\x80-\xFF]/) # otherwise, if we've got non-ascii symbols, we suppose it's in configured encoding
+    {
+        Encode::from_to( $value, $_script_charset, 'utf8' );
     }
 
-    if ($value =~ /[\x80-\xFF]/)
+    return $value;
+}
+
+sub _from_utf8
+{
+    my ($value) = @_;
+
+    return $value unless $value;
+
+    if ($_script_charset ne 'utf8') # if script uses non-utf encoding, just encode data to the script encoding
     {
-        Encode::from_to( $value, 'cp1251', 'utf8' );
+        Encode::from_to( $value, 'utf8', $_script_charset );
+    }
+    else # otherwise, decode octets to characters
+    {
+        utf8::decode( $value );
     }
 
     return $value;
@@ -542,8 +564,8 @@ sub _get_reference_descriptor
 
 
     return +{
-        name       => _safe_utf8( "$name" ),
-        value      => _safe_utf8( "$value" ),
+        name       => _to_utf8( "$name" ),
+        value      => _to_utf8( "$value" ),
         type       => "$type",
         expandable => $expandable,
         key        => $stringified_key,
@@ -782,7 +804,7 @@ sub _event_handler
 
             my ($transaction_id, $request_object) = @$transaction_data{qw/id data/};
 
-            my $result = _eval_expression( $request_object->{expression} // '' );
+            my $result = _eval_expression( _from_utf8( $request_object->{expression} // '' ) );
             $result->{result} = _get_reference_descriptor( result => $result->{result} );
 
             _send_transaction_response( $transaction_id, $result );
@@ -1128,11 +1150,40 @@ sub _set_breakpoint
     }
 }
 
+sub _set_up_debugger
+{
+    my ($json_data) = @_;
+    _report 'Setting up debugger: %s', $json_data if $_dev_mode;
+    my $set_up_data = _deserialize( $json_data );
+    $_script_charset = $set_up_data->{charset};
+    _process_breakpoints_descriptors( $set_up_data->{breakpoints} );
+
+    my $start_mode = $set_up_data->{startMode};
+
+    if ($start_mode eq 'RUN')
+    {
+        return STEP_CONTINUE;
+    }
+    elsif ($start_mode eq 'COMPILE')
+    {
+        return STEP_INTO;
+    }
+    else # here we should have a RUN_TO_BREAKPOINT
+    {
+        return STEP_CONTINUE;
+    }
+}
+
 sub _process_new_breakpoints
 {
     my ($json_data) = @_;
-    my $descriptors = _deserialize( $json_data );
     _report "Processing breakpoints: %s", $json_data if $_dev_mode;
+    return _process_breakpoints_descriptors( _deserialize( $json_data ) );
+}
+
+sub _process_breakpoints_descriptors
+{
+    my ($descriptors) = @_;
 
     foreach my $descriptor (@$descriptors)
     {
@@ -1631,19 +1682,10 @@ foreach my $main_key (keys %::)
 }
 
 _send_event( "READY" );
-
-_report "Waiting for breakpoints..." if $_dev_mode;
-my $breakpoints_data = <$_debug_socket>;
-die "Connection closed" unless defined $breakpoints_data;
-
-if ($breakpoints_data =~ /^b (.+)$/s)
-{
-    _process_new_breakpoints( $1 );
-}
-else
-{
-    _report "Incorrect breakpoints data: %s", $breakpoints_data if $_dev_mode;
-}
+_report "Waiting for set up data..." if $_dev_mode;
+my $set_up_data = <$_debug_socket>;
+die "Connection closed" unless defined $set_up_data;
+my $initial_state = _set_up_debugger( $set_up_data );
 
 $_internal_process = 0;
 $ready_to_go = 1;
@@ -1654,8 +1696,6 @@ $ready_to_go = 1;
 *DB::postponed = \&load_handler;
 #*DB::goto = \&goto_handler;
 
-$DB::single = STEP_CONTINUE;
-
-#$DB::single = STEP_CONTINUE;
+$DB::single = $initial_state;
 
 1; # End of Devel::Camelcadedb
