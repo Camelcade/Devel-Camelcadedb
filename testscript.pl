@@ -37,6 +37,10 @@ my $rus_utf_words = $rus_words;
 Encode::from_to( $rus_utf_words, 'cp1251', 'utf8' );
 utf8::decode( $rus_utf_words );
 
+my $var = 123;
+$var = 345;
+$var = 567;
+
 my $glob = \*::;
 my $deep_object = \\\\\\\LWP::UserAgent->new();
 my $regexp = qr/something/;

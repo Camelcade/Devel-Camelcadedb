@@ -241,6 +241,30 @@ sub _send_loaded_files_names
 }
 
 
+sub _send_breakpoint_reached_event
+{
+    my ($breakpoint) = @_;
+
+    my $event_data = {
+        path       => $breakpoint->{path},
+        line       => $breakpoint->{line} - 1,
+        logmessage => $breakpoint->{action_result},
+    };
+
+    if ($breakpoint->{suspend})
+    {
+        $event_data->{suspend} = \1;
+        $event_data->{frames} = _calc_stack_frames();
+    }
+    else
+    {
+        $event_data->{suspend} = \0;
+        $event_data->{frames} = [ ];
+    }
+
+    _send_event( 'BREAKPOINT_REACHED', $event_data );
+}
+
 sub _send_event
 {
     my ($name, $data) = @_;
@@ -776,8 +800,17 @@ sub _release_the_hounds
 
 sub _event_handler
 {
+    my ($breakpoint) = @_;
     _send_loaded_files_names();
-    _send_event( "STOP", _calc_stack_frames() );
+
+    if ($breakpoint && !$breakpoint->{run_to_cursor})
+    {
+        _send_breakpoint_reached_event( $breakpoint );
+    }
+    else
+    {
+        _send_event( "STOP", _calc_stack_frames() );
+    }
 
     while()
     {
@@ -1026,6 +1059,7 @@ sub _get_current_breakpoint
     if ($current_breakpoint->{run_to_cursor})
     {
         $current_breakpoint->{remove} = 1;
+        $current_breakpoint->{line}--; # fixme find out why works without it
         _process_breakpoints_descriptors( [ $current_breakpoint ] );
     }
     return $current_breakpoint;
@@ -1092,7 +1126,7 @@ sub _set_run_to_cursor_breakpoint
 {
     my ($serialized_descriptor) = @_;
     my $descriptor = _deserialize( $serialized_descriptor );
-    @$descriptor{qw/run_to_cursor condition remove/} = (1, undef, undef);
+    @$descriptor{qw/run_to_cursor condition remove suspend/} = (1, undef, undef, \1);
     _process_breakpoints_descriptors( [ $descriptor ] );
 }
 
@@ -1161,6 +1195,7 @@ sub _process_breakpoints_descriptors
     {
         $descriptor->{line}++;
         $descriptor->{condition} = _from_utf8( $descriptor->{condition} );
+        $descriptor->{action} = _from_utf8( $descriptor->{action} );
 
         _report "Processing descriptor: %s %s %s", $descriptor->{path}, $descriptor->{line},
                 $descriptor->{remove} ? 'remove' : 'set' if $_dev_mode;
@@ -1298,12 +1333,26 @@ EOM
     }
 
     my $skip_event_handler = 0;
-    if (my $breakpoint = _get_current_breakpoint)
+    my $breakpoint;
+    if ($breakpoint = _get_current_breakpoint)
     {
         my $condition = $breakpoint->{condition};
 
         if ($condition && !_eval_expression( $condition )->{result})
         {
+            ( $@, $!, $^E, $,, $/, $\, $^W ) = @saved;
+            $_internal_process = 0;
+            return;
+        }
+
+        if (my $action = $breakpoint->{action})
+        {
+            $breakpoint->{action_result} = _to_utf8( _eval_expression( $action )->{result} );
+        }
+
+        if (!$breakpoint->{suspend})
+        {
+            _send_breakpoint_reached_event( $breakpoint );
             ( $@, $!, $^E, $,, $/, $\, $^W ) = @saved;
             $_internal_process = 0;
             return;
@@ -1340,7 +1389,7 @@ EOM
         if $_dev_mode;
 
     _report $DB::dbline[$current_line] if $_dev_mode;
-    _event_handler( ) unless $skip_event_handler;
+    _event_handler( $breakpoint ) unless $skip_event_handler;
 
     $_internal_process = 0;
     ( $@, $!, $^E, $,, $/, $\, $^W ) = @saved;
