@@ -765,6 +765,15 @@ sub _is_use_frame
     return $is_use_block;
 }
 
+sub _release_the_hounds
+{
+    foreach my $frame (@{$_stack_frames})
+    {
+        $frame->{single} = STEP_CONTINUE;
+    }
+    $DB::single = STEP_CONTINUE;
+}
+
 sub _event_handler
 {
     _send_loaded_files_names();
@@ -800,16 +809,18 @@ sub _event_handler
         }
         elsif ($command eq 'g')
         {
-            foreach my $frame (@{$_stack_frames})
-            {
-                $frame->{single} = STEP_CONTINUE;
-            }
-            $DB::single = STEP_CONTINUE;
+            _release_the_hounds();
             return;
         }
         elsif ($command =~ /^b (.+)$/) # set breakpoints from proto
         {
             _process_new_breakpoints( $1 );
+        }
+        elsif ($command =~ /^p (.+)$/) # Run to cursor
+        {
+            _set_run_to_cursor_breakpoint( $1 );
+            _release_the_hounds();
+            return;
         }
         elsif ($command eq 'o') # over,
         {
@@ -1007,15 +1018,17 @@ sub _get_loaded_breakpoints_by_real_path
     return scalar keys %$result ? $result : undef;
 }
 
-sub _get_breakpoint
+sub _get_current_breakpoint
 {
     return if $DB::single || $DB::signal;
-    my $loaded_breakpoints = _get_loaded_breakpoints_by_real_path( _get_real_path_by_normalized_perl_file_id( $current_file_id ) );
-    if ($loaded_breakpoints && $loaded_breakpoints->{$current_line})
+    my $current_breakpoint = $DB::dbline{$current_line};
+    return unless $current_breakpoint;
+    if ($current_breakpoint->{run_to_cursor})
     {
-        return $loaded_breakpoints->{$current_line};
+        $current_breakpoint->{remove} = 1;
+        _process_breakpoints_descriptors( [ $current_breakpoint ] );
     }
-    return;
+    return $current_breakpoint;
 }
 
 sub _eval_expression
@@ -1075,6 +1088,14 @@ sub _reset_breakpoint
     return 1;
 }
 
+sub _set_run_to_cursor_breakpoint
+{
+    my ($serialized_descriptor) = @_;
+    my $descriptor = _deserialize( $serialized_descriptor );
+    @$descriptor{qw/run_to_cursor condition remove/} = (1, undef, undef);
+    _process_breakpoints_descriptors( [ $descriptor ] );
+}
+
 sub _set_breakpoint
 {
     my ($breakpoint_descriptor, $real_line, $perl_breakpoints_map, $perl_source_lines) = @_;
@@ -1094,8 +1115,8 @@ sub _set_breakpoint
     }
     else
     {
-        $perl_breakpoints_map->{$real_line} = 1;
-        _send_event( "BREAKPOINT_SET", $event_data );
+        $perl_breakpoints_map->{$real_line} = $breakpoint_descriptor;
+        _send_event( "BREAKPOINT_SET", $event_data ) unless $breakpoint_descriptor->{run_to_cursor};
         return 1;
     }
 }
@@ -1277,7 +1298,7 @@ EOM
     }
 
     my $skip_event_handler = 0;
-    if (my $breakpoint = _get_breakpoint)
+    if (my $breakpoint = _get_current_breakpoint)
     {
         my $condition = $breakpoint->{condition};
 
