@@ -1188,6 +1188,7 @@ sub _process_breakpoints_descriptors
     foreach my $descriptor (@$descriptors)
     {
         $descriptor->{line}++;
+        $descriptor->{condition} = _from_utf8( $descriptor->{condition} );
 
         _report "Processing descriptor: %s %s %s", $descriptor->{path}, $descriptor->{line},
                 $descriptor->{remove} ? 'remove' : 'set' if $_dev_mode;
