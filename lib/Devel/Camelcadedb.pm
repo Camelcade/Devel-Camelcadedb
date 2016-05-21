@@ -137,12 +137,6 @@ my $ready_to_go = 0; # set after debugger been initialized
 
 my $_stack_frames = [ ];     # stack frames
 
-sub _dump
-{
-    require Data::Dumper;
-    return Data::Dumper->Dump( [ @_ ] );
-}
-
 sub _report($;@)
 {
     return unless $_dev_mode;
@@ -555,7 +549,7 @@ sub _get_reference_descriptor
     $name = "$name";
     $value = "$value";
 
-    $name =~ s{([^\n\r\f\t])}{
+    $name =~ s{(.)}{
         $char_code = ord( $1 );
         $char_code < 32 ? '^'.chr( $char_code + 0x40 ) : $1
         }gsex;
@@ -790,19 +784,6 @@ sub _event_handler
             _report "Exiting" if $_dev_mode;
             exit;
         }
-        elsif ($command eq 'l') # list
-        {
-            for (my $i = 0; $i < @DB::dbline; $i++)
-            {
-                my $src = $DB::dbline[$i] // '';
-                chomp $src;
-                _report "%s: %s (%s)\n", $i, $src, $DB::dbline[$i] == 0 ? 'unbreakable' : 'breakable' if $_dev_mode;
-            }
-        }
-        elsif ($command eq 's') # dump %sub
-        {
-            _report _dump( \%DB::sub ) if $_dev_mode;
-        }
         elsif ($command =~ /^e\s+(.+)$/) # eval expresion
         {
             my $data = $1;
@@ -817,10 +798,6 @@ sub _event_handler
 
             _report "Result is $result\n" if $_dev_mode;
         }
-        elsif ($command eq 'f') # dump keys of %DB::dbline
-        {
-            _report _dump( \%_perl_file_id_to_path_map ) if $_dev_mode;
-        }
         elsif ($command eq 'g')
         {
             foreach my $frame (@{$_stack_frames})
@@ -830,38 +807,9 @@ sub _event_handler
             $DB::single = STEP_CONTINUE;
             return;
         }
-        elsif ($command eq 'b') # show breakpoints, manual
-        {
-            print _dump( \%DB::dbline );
-        }
-        elsif ($command =~ /^b (\d+)$/) # set breakpoints, manual
-        {
-            my $line = $1;
-            if ($DB::dbline[$line] == 0)
-            {
-                _report "Line $line is unbreakable, try another one\n" if $_dev_mode;
-            }
-            else
-            {
-                if ($DB::dbline{$line})
-                {
-                    $DB::dbline{$line} = 0;
-                    _report "Removed breakpoint from line $line\n" if $_dev_mode;
-                }
-                else
-                {
-                    $DB::dbline{$line} = 1;
-                    _report "Added breakpoint to line $line\n" if $_dev_mode;
-                }
-            }
-        }
         elsif ($command =~ /^b (.+)$/) # set breakpoints from proto
         {
             _process_new_breakpoints( $1 );
-        }
-        elsif ($command eq 'v') # show variables
-        {
-            _report "Lexical variables:\n%s", _render_variables( peek_my( 2 ) ) if $_dev_mode;
         }
         elsif ($command eq 'o') # over,
         {
@@ -895,10 +843,6 @@ sub _event_handler
             $DB::single = STEP_CONTINUE;
 
             return;
-        }
-        elsif ($command eq 't') # stack trace
-        {
-            _dump_stack && _dump_frames;
         }
         else
         {
