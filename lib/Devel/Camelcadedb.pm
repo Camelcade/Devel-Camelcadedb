@@ -111,6 +111,8 @@ my $_debug_load_handler = 0;                    # debug modules loading
 
 my $_script_charset = 'utf8';   # all sources and strings without utf flag will be encoded from this encoding to the utf
 
+my $_skip_run_stop = 0; # flag for skipping forced stop on run phase
+
 my $_debug_socket;
 my $_debug_packed_address;
 
@@ -143,7 +145,7 @@ sub _dump
 
 sub _report($;@)
 {
-    return unless ($_dev_mode);
+    return unless $_dev_mode;
     my ($message, @sprintf_args) = @_;
     chomp $message;
 
@@ -181,8 +183,8 @@ sub _get_loaded_files_map
     foreach my $key (keys %::)
     {
         my $glob = $::{$key};
-        next unless ($key =~ s/^_<//);
-        next unless (*$glob{ARRAY} && scalar @{*$glob{ARRAY}});
+        next unless $key =~ s/^_<//;
+        next unless *$glob{ARRAY} && scalar @{*$glob{ARRAY}};
         $result{$key} = ${*$glob};
     }
     return \%result;
@@ -223,14 +225,14 @@ sub _send_loaded_files_names
 
     foreach my $file_id (keys %$loaded_files_map)
     {
-        next if (index( $file_id, 'Camelcadedb.pm' ) != -1 || exists $_file_name_sent{$file_id});
+        next if index( $file_id, 'Camelcadedb.pm' ) != -1 || exists $_file_name_sent{$file_id};
         $_file_name_sent{$file_id} = 1;
         push @files_to_add, _get_file_descriptor_by_id( $file_id );
     }
 
     foreach my $file_id (keys %_file_name_sent)
     {
-        next if (exists $loaded_files_map->{$file_id});
+        next if exists $loaded_files_map->{$file_id};
         delete $_file_name_sent{$file_id};
         push @files_to_remove, _get_file_descriptor_by_id( $file_id );
     }
@@ -262,7 +264,7 @@ sub _dump_stack
     while()
     {
         my @caller = caller( $depth );
-        last unless (defined $caller[2]);
+        last unless defined $caller[2];
         _report $frame_prefix_step."%s: %s\n", $depth++, _format_caller( @caller ) if $_dev_mode;
     }
     1;
@@ -317,7 +319,7 @@ sub _get_file_source_by_file_id
 sub _get_file_source_once_by_file_id
 {
     my ($file_id) = @_;
-    return if ($_source_been_sent{$file_id});
+    return if $_source_been_sent{$file_id};
     return _get_file_source_by_file_id( $file_id );
 }
 
@@ -405,7 +407,7 @@ sub _get_reference_subelements
             foreach my $glob_slot (@glob_slots)
             {
                 my $reference = *$source_data{$glob_slot};
-                next unless ($reference);
+                next unless $reference;
                 my $desciptor = _get_reference_descriptor( $glob_slot, \$reference );
 
                 # hack for DB namespace, see https://github.com/hurricup/Perl5-IDEA/issues/1151
@@ -497,16 +499,19 @@ sub _get_reference_descriptor
     my $expandable = \0;
     my $is_blessed = $ref && Scalar::Util::blessed( $value ) ? \1 : \0;
     my $ref_depth = 0;
+    my $is_utf = \0;
 
     if (!$reftype)
     {
         $type = "SCALAR";
         $value = defined $value ? "\"$value\"" : 'undef'; #_escape_scalar(
+        $is_utf = defined $value && utf8::is_utf8( $value ) ? \1 : \0;
         $key //= 'undef';
     }
     elsif ($reftype eq 'SCALAR')
     {
         $value = defined $$value ? "\"$$value\"" : 'undef'; #_escape_scalar(
+        $is_utf = defined $$value && utf8::is_utf8( $$value ) ? \1 : \0;
     }
     elsif ($reftype eq 'REF')
     {
@@ -572,6 +577,7 @@ sub _get_reference_descriptor
         size       => $size,
         blessed    => $is_blessed,
         ref_depth  => $ref_depth,
+        is_utf     => $is_utf
     };
 }
 
@@ -708,7 +714,7 @@ sub _calc_stack_frames
         my $cnt = 0;
         my %frame_args = map{ '$_['.$cnt++.']' => $_ } @DB::args;
 
-        last unless (defined $filename);
+        last unless defined $filename;
 
         if ($package && $package ne 'DB')
         {
@@ -731,7 +737,7 @@ sub _calc_stack_frames
                 $lexical_variables = _format_variables( $variables_hash );
             }
 
-            $frames->[-1]->{args} = _format_variables( \%frame_args ) if (scalar @$frames);
+            $frames->[-1]->{args} = _format_variables( \%frame_args ) if scalar @$frames;
 
             my $descriptor = _get_file_descriptor_by_id( $filename );
 
@@ -775,7 +781,7 @@ sub _event_handler
         _report "Waiting for input\n" if $_dev_mode;
         local $/ = "\n";
         my $command = <$_debug_socket>;
-        die 'Debugging socket disconnected' if (!defined $command);
+        die 'Debugging socket disconnected' if !defined $command;
         $command =~ s/[\r\n]+$//;
         _report "============> Got command: '%s'\n", $command if $_dev_mode;
 
@@ -922,7 +928,7 @@ sub _enter_frame
         single  => $old_db_single,
     };
     unshift @$_stack_frames, $new_stack_frame;
-    _apply_queued_breakpoints() if ($ready_to_go);
+    _apply_queued_breakpoints() if $ready_to_go;
     return $new_stack_frame;
 }
 
@@ -934,7 +940,7 @@ sub _exit_frame
     $frame_prefix = $frame_prefix_step x (scalar @$_stack_frames);
     _report "Leaving frame %s, setting single to %s", (scalar @$_stack_frames + 1),
         $frame->{single} if $_debug_sub_handler && $_dev_mode;
-    _apply_queued_breakpoints() if ($ready_to_go);
+    _apply_queued_breakpoints() if $ready_to_go;
     $DB::single = $frame->{single};
     $_internal_process = 0;
 }
@@ -957,7 +963,7 @@ sub _get_perl_file_id_by_real_path
 {
     my ($path) = @_;
 
-    return $path if ($path =~ /^\(eval \d+\)/);
+    return $path if $path =~ /^\(eval \d+\)/;
     return exists $_paths_to_perl_file_id_map{$path} ? $_paths_to_perl_file_id_map{$path} : undef;
 }
 
@@ -986,7 +992,7 @@ sub _get_perl_line_breakpoints_map_by_real_path
 sub _get_perl_source_lines_by_file_id
 {
     my ($file_id) = @_;
-    return unless ($file_id);
+    return unless $file_id;
     my $glob = $::{"_<$file_id"};
     return $glob && *$glob{ARRAY} && scalar @{*$glob{ARRAY}} ? *$glob{ARRAY} : undef;
 }
@@ -1059,7 +1065,7 @@ sub _get_loaded_breakpoints_by_real_path
 
 sub _get_breakpoint
 {
-    return if ($DB::single || $DB::signal);
+    return if $DB::single || $DB::signal;
     my $loaded_breakpoints = _get_loaded_breakpoints_by_real_path( _get_real_path_by_normalized_perl_file_id( $current_file_id ) );
     if ($loaded_breakpoints && $loaded_breakpoints->{$current_line})
     {
@@ -1170,6 +1176,7 @@ sub _set_up_debugger
     }
     else # here we should have a RUN_TO_BREAKPOINT
     {
+        $_skip_run_stop = 1;
         return STEP_CONTINUE;
     }
 }
@@ -1206,7 +1213,7 @@ sub _process_breakpoints_descriptors
 #
 sub _apply_queued_breakpoints
 {
-    return unless ($ready_to_go);
+    return unless $ready_to_go;
     foreach my $file_path (keys %_queued_breakpoints_files)
     {
         _set_break_points_for_file( $file_path );
@@ -1244,7 +1251,7 @@ sub _set_break_points_for_file
         }
     }
 
-    delete $_queued_breakpoints_files{$real_path} unless ($breakpoints_left);
+    delete $_queued_breakpoints_files{$real_path} unless $breakpoints_left;
     _switch_context( $old_context );
 }
 
@@ -1290,7 +1297,7 @@ sub _switch_context
 # feature is disabled when executing inside DB::DB() , including functions called from it unless $^D & (1<<30) is true.
 sub step_handler
 {
-    return if ($_internal_process);
+    return if $_internal_process;
     $_internal_process = 1;
 
     # Save eval failure, command failure, extended OS error, output field
@@ -1325,6 +1332,7 @@ EOM
         _dump_stack && _dump_frames && warn "CAN'T FIND CALLER;\n";
     }
 
+    my $skip_event_handler = 0;
     if (my $breakpoint = _get_breakpoint)
     {
         my $condition = $breakpoint->{condition};
@@ -1342,6 +1350,16 @@ EOM
         }
         $DB::single = STEP_INTO;
     }
+    elsif ($DB::single && $_skip_run_stop)
+    {
+        $_skip_run_stop = 0;
+        $skip_event_handler = 1;
+        $DB::single = STEP_CONTINUE;
+    }
+    elsif ($_skip_run_stop)
+    {
+        $_skip_run_stop = 0;
+    }
 
     my $old_db_single = $DB::single;
     $DB::single = STEP_CONTINUE;
@@ -1357,7 +1375,7 @@ EOM
         if $_dev_mode;
 
     _report $DB::dbline[$current_line] if $_dev_mode;
-    _event_handler( );
+    _event_handler( ) unless $skip_event_handler;
 
     $_internal_process = 0;
     ( $@, $!, $^E, $,, $/, $\, $^W ) = @saved;
@@ -1573,7 +1591,7 @@ sub load_handler
         $DB::trace // 'undef',
         $DB::signal // 'undef',
         $old_db_single // 'undef',
-        if ( $_debug_load_handler && $_dev_mode)
+        if $_debug_load_handler && $_dev_mode
     ;
 
     _set_break_points_for_file( $real_path ) if $ready_to_go; # this is necessary, because perl internally re-initialize bp hash
@@ -1648,10 +1666,10 @@ else
             ReuseAddr => 1,
             Proto     => 'tcp',
         );
-        last if ($_debug_socket);
+        last if $_debug_socket;
         sleep( 1 ); # this is kinda hacky
     }
-    die "Error connecting to $ENV{PERL5_DEBUG_HOST}:$ENV{PERL5_DEBUG_PORT}" unless ($_debug_socket);
+    die "Error connecting to $ENV{PERL5_DEBUG_HOST}:$ENV{PERL5_DEBUG_PORT}" unless $_debug_socket;
 }
 $_debug_socket->autoflush( 1 );
 print STDERR "Connected.\n";
@@ -1663,7 +1681,7 @@ push @$_stack_frames, {
         single       => STEP_INTO,
     };
 
-_dump_stack && _dump_frames if ($trace_code_stack_and_frames);
+_dump_stack && _dump_frames if $trace_code_stack_and_frames;
 
 $_internal_process = 1;
 
