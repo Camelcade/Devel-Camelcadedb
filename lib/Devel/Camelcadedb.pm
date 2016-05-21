@@ -504,14 +504,14 @@ sub _get_reference_descriptor
     if (!$reftype)
     {
         $type = "SCALAR";
-        $value = defined $value ? "\"$value\"" : 'undef'; #_escape_scalar(
         $is_utf = defined $value && utf8::is_utf8( $value ) ? \1 : \0;
+        $value = defined $value ? "\"$value\"" : 'undef'; #_escape_scalar(
         $key //= 'undef';
     }
     elsif ($reftype eq 'SCALAR')
     {
-        $value = defined $$value ? "\"$$value\"" : 'undef'; #_escape_scalar(
         $is_utf = defined $$value && utf8::is_utf8( $$value ) ? \1 : \0;
+        $value = defined $$value ? "\"$$value\"" : 'undef'; #_escape_scalar(
     }
     elsif ($reftype eq 'REF')
     {
