@@ -32,7 +32,7 @@ my ($var_1, $var_2, $var_3, $var_4) =
         'text\nab',
         "text\\n\nab",);
 
-my $rus_words = 'Привет!';
+my $rus_words = 'пїЅпїЅпїЅпїЅпїЅпїЅ!';
 my $rus_utf_words = $rus_words;
 Encode::from_to( $rus_utf_words, 'cp1251', 'utf8' );
 utf8::decode( $rus_utf_words );
@@ -113,7 +113,14 @@ sub mysub2
     print 69 ."\n";
 }
 
-mysub( 123 );
+mysub(
+    key1 => 'val1',
+    key2 => 'val2',
+    key3 => 'val3',
+    key4 => 'val4',
+    key5 => 'val5',
+    key6 => 'val6',
+);
 somethingTestmod();
 
 foreach my $element (1 .. 5)

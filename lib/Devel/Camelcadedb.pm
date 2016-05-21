@@ -429,7 +429,7 @@ sub _get_reference_subelements
     _send_transaction_response( $transaction_id, $data );
 }
 
-sub _format_variables
+sub _format_variables_hash
 {
     my ($vars_hash) = @_;
 
@@ -706,7 +706,7 @@ sub _calc_stack_frames
             $wantarray, $evaltext, $is_require, $hints, $bitmask, $hinthash) = caller( $depth );
 
         my $cnt = 0;
-        my %frame_args = map{ '$_['.$cnt++.']' => $_ } @DB::args;
+        my @frame_args = map _get_reference_descriptor( '$_['.$cnt++.']', $_ ), @DB::args;
 
         last unless defined $filename;
 
@@ -721,17 +721,17 @@ sub _calc_stack_frames
             my $global_variables_hash = eval {peek_our( $depth + 1 )};
             unless ($@)
             {
-                $global_variables = _format_variables( $global_variables_hash );
+                $global_variables = _format_variables_hash( $global_variables_hash );
             }
 
             my $lexical_variables = [ ];
             my $variables_hash = eval {peek_my( $depth + 1 )};
             unless ($@)
             {
-                $lexical_variables = _format_variables( $variables_hash );
+                $lexical_variables = _format_variables_hash( $variables_hash );
             }
 
-            $frames->[-1]->{args} = _format_variables( \%frame_args ) if scalar @$frames;
+            $frames->[-1]->{args} = \@frame_args if scalar @$frames;
 
             my $descriptor = _get_file_descriptor_by_id( $filename );
 
