@@ -1405,7 +1405,7 @@ EOM
 #
 #        if ($glob && *{$glob}{CODE})
 #        {
-#            *{$glob}{CODE}->($filename, $lines_map);
+#            *{$glob}{CODE}->($filepath, $lines_map);
 #        }
 #    }
 #
@@ -1430,6 +1430,8 @@ sub template_handler
 
     if ($last_eval_id)
     {
+        $real_path = Cwd::realpath( $real_path );
+
         $_evals_to_templates_map{$eval_target} = {
             path      => $real_path,
             lines_map => $lines_map

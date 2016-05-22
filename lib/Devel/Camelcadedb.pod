@@ -1,0 +1,30 @@
+=head1 NAME
+
+Devel::Camelcadedb - perl side of the perl debugger for IntelliJ IDEA and other JetBrains IDE
+
+=head1 DESCRIPTION
+
+This module should be instaleld for debugging using L<Camelcade plugin for IntelliJ IDEA|https://github.com/hurricup/Perl5-IDEA>
+
+=head1 TEMPLATE ENGINES INTEGRATION
+
+Debugger has an eval-based template engines support, but it requires some code from the engine side. This allows to
+set breakpoints in the template file.
+
+To make this work, template engine should invoke debugger's hook immediately after evaling compiled template code,
+providing template source file path and reference to the hash of lines map C<< template_line => eval_line  >>. Example:
+
+    eval($compiled_template);
+    {
+        no strict 'refs';
+        my $glob = *{'::DB::template_handler'};
+
+        if ($glob && *{$glob}{CODE})
+        {
+            *{$glob}{CODE}->($filepath, $lines_map);
+        }
+    }
+
+=head1 AUTHORS
+
+2016 Alexandr Evstigneev  L<hurricup@gmail.com|mailto:hurricup@gmail.com>
