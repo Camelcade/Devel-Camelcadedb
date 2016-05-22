@@ -10,7 +10,7 @@ use IO::Socket::INET;
 use PadWalker qw/peek_my peek_our/;
 use Scalar::Util;
 use Encode;
-our $VERSION = 1;
+our $VERSION = "1.6.0";
 
 #sub FLAG_REPORT_GOTO() {0x80;}
 
@@ -621,8 +621,6 @@ sub _render_variables
 {
     my ($vars_hash) = @_;
     my $result = '';
-
-    require Scalar::Util;
 
     foreach my $variable (keys %$vars_hash)
     {
@@ -1714,7 +1712,10 @@ foreach my $main_key (keys %::)
     }
 }
 
-_send_event( "READY" );
+_send_data_to_debugger( +{
+        event   => 'READY',
+        version => $VERSION,
+    } );
 _report "Waiting for set up data..." if $_dev_mode;
 my $set_up_data = <$_debug_socket>;
 die "Connection closed" unless defined $set_up_data;
