@@ -9,6 +9,7 @@
       <sourceFolder url="file://$MODULE_DIR$/xt" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/original" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/src" isTestSource="false" />
+      <excludeFolder url="file://$MODULE_DIR$/blib" />
     </content>
     <orderEntry type="module-library">
       <library>
