@@ -52,6 +52,8 @@ my %hash = (
     cref    => sub {print "blah!";},
     browser => LWP::UserAgent->new(),
     regex   => qr/somethingelse/,
+    newlines
+    => \@newlines
 );
 my @array = (
     {

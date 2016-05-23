@@ -513,7 +513,9 @@ sub _get_reference_descriptor
     my $ref = ref $value;
 
     my $size = 0;
-    my $type = $ref;
+    my $type = sprintf "%s", $value // 'undef';
+    $type = sprintf "%s=%s", $ref // 'undef', $reftype // 'undef' unless $type =~ /\(0x[A-F0-9]+\)$/i;
+
     my $expandable = \0;
     my $is_blessed = $ref && Scalar::Util::blessed( $value ) ? \1 : \0;
     my $ref_depth = 0;
@@ -540,13 +542,13 @@ sub _get_reference_descriptor
     elsif ($reftype eq 'ARRAY')
     {
         $size = scalar @$value;
-        $value = sprintf "ARRAY[%s]", $size;
+        $value = sprintf "size = %s", $size;
         $expandable = $size ? \1 : \0;
     }
     elsif ($reftype eq 'HASH')
     {
         $size = scalar keys %$value;
-        $value = sprintf "HASH{%s}", $size;
+        $value = sprintf "size = %s", $size;
         $expandable = $size ? \1 : \0;
     }
     elsif ($reftype eq 'GLOB')
