@@ -10,7 +10,8 @@ use IO::Socket::INET;
 use PadWalker qw/peek_my peek_our/;
 use Scalar::Util;
 use Encode;
-our $VERSION = "1.6.0";
+use overload;
+our $VERSION = "1.6.1.0";
 
 #sub FLAG_REPORT_GOTO() {0x80;}
 
@@ -513,8 +514,7 @@ sub _get_reference_descriptor
     my $ref = ref $value;
 
     my $size = 0;
-    my $type = sprintf "%s", $value // 'undef';
-    $type = sprintf "%s=%s", $ref // 'undef', $reftype // 'undef' unless $type =~ /\(0x[A-F0-9]+\)$/i;
+    my $type = overload::StrVal( $value );
 
     my $expandable = \0;
     my $is_blessed = $ref && Scalar::Util::blessed( $value ) ? \1 : \0;
