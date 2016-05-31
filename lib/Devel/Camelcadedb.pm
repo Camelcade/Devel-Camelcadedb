@@ -10,6 +10,7 @@ use 5.008;
 use strict;
 use warnings;
 use IO::Socket::INET;
+use IO::Select;
 use PadWalker qw/peek_my peek_our/;
 use Scalar::Util;
 use Encode;
@@ -119,6 +120,7 @@ my $_skip_run_stop = 0; # flag for skipping forced stop on run phase
 
 my $_debug_socket;
 my $_debug_packed_address;
+my IO::Select $_debug_socket_select;
 
 my $coder;  # JSON::XS coder
 my $deparser; # B::Deparse deparser
@@ -812,6 +814,126 @@ sub _release_the_hounds
     _set_frames_single( STEP_CONTINUE );
 }
 
+sub _process_command
+{
+    my ($command) = @_;
+    _report "============> Got command: '%s'\n", $command if $_dev_mode;
+
+    if ($command eq 'q')
+    {
+        _report "Exiting" if $_dev_mode;
+        exit;
+    }
+    elsif ($command =~ /^e\s+(.+)$/) # eval expresion
+    {
+        my $data = $1;
+        my $transaction_data = _deserialize( $data );
+
+        my ($transaction_id, $request_object) = @$transaction_data{qw/id data/};
+
+        my $result = _eval_expression( _from_utf8( $request_object->{expression} // '' ) );
+        $result->{result} = _get_reference_descriptor( result => $result->{result} );
+
+        _send_transaction_response( $transaction_id, $result );
+
+        _report "Result is $result\n" if $_dev_mode;
+    }
+    elsif ($command eq 'pause')
+    {
+        _hold_the_line;
+    }
+    elsif ($command eq 'g')
+    {
+        _release_the_hounds();
+        return;
+    }
+    elsif ($command =~ /^b (.+)$/) # set breakpoints from proto
+    {
+        _process_new_breakpoints( $1 );
+    }
+    elsif ($command =~ /^p (.+)$/) # Run to cursor
+    {
+        _set_run_to_cursor_breakpoint( $1 );
+        _release_the_hounds();
+        return;
+    }
+    elsif ($command eq 'o') # over,
+    {
+        my $current_frame = _get_current_stack_frame;
+        if (_is_use_frame( $current_frame ))
+        {
+            $current_frame->{single} = STEP_INTO;
+            $DB::single = STEP_CONTINUE;
+        }
+        else
+        {
+            $DB::single = STEP_OVER;
+        }
+        return;
+    }
+    elsif ($command =~ /^getchildren (.+)$/) # expand,
+    {
+        _get_reference_subelements( $1 );
+    }
+    elsif ($command =~ /^get_source (.+)$/) # get eval/file source
+    {
+        _get_file_source_handler( $1 );
+    }
+    elsif ($command eq 'u') # step out
+    {
+        my $current_frame = _get_current_stack_frame;
+        if (_is_use_frame( $current_frame ))
+        {
+            $current_frame->{single} = STEP_CONTINUE;
+        }
+        $DB::single = STEP_CONTINUE;
+
+        return;
+    }
+    else
+    {
+        $DB::single = STEP_INTO;
+        return;
+    }
+    return 1;
+}
+
+my $input_buffer = '';
+
+sub _get_next_command
+{
+    my $read_bytes;
+    my $new_line_index = index $input_buffer, "\n";
+
+    if ($new_line_index == -1)
+    {
+        while( $read_bytes = sysread( $_debug_socket, $input_buffer, 10240, length( $input_buffer ) ))
+        {
+            last if ($new_line_index = index $input_buffer, "\n") > -1;
+        }
+        unless (defined $read_bytes)
+        {
+            die 'Debugging socket disconnected';
+            print STDERR "$!\n";
+            exit -1;
+        }
+        unless ($new_line_index > -1)
+        {
+            print STDERR "Buffer $input_buffer has no newlines in it and nothing is in the socket\n";
+            exit -1;
+        }
+    }
+    my $command = substr $input_buffer, 0, $new_line_index + 1, '';
+    $command =~ s/[\r\n]+$//;
+    #    printf STDERR "Got command: %s and left in buffer %s\n%s\n\%s\n", length $command, length $input_buffer ,$command, $input_buffer;
+    return $command;
+}
+
+sub _can_read
+{
+    return length( $input_buffer ) > 0 || scalar $_debug_socket_select->can_read( 0 );
+}
+
 sub _event_handler
 {
     my ($breakpoint) = @_;
@@ -829,84 +951,7 @@ sub _event_handler
     while()
     {
         _report "Waiting for input\n" if $_dev_mode;
-        local $/ = "\n";
-        my $command = <$_debug_socket>;
-        die 'Debugging socket disconnected' if !defined $command;
-        $command =~ s/[\r\n]+$//;
-        _report "============> Got command: '%s'\n", $command if $_dev_mode;
-
-        if ($command eq 'q')
-        {
-            _report "Exiting" if $_dev_mode;
-            exit;
-        }
-        elsif ($command =~ /^e\s+(.+)$/) # eval expresion
-        {
-            my $data = $1;
-            my $transaction_data = _deserialize( $data );
-
-            my ($transaction_id, $request_object) = @$transaction_data{qw/id data/};
-
-            my $result = _eval_expression( _from_utf8( $request_object->{expression} // '' ) );
-            $result->{result} = _get_reference_descriptor( result => $result->{result} );
-
-            _send_transaction_response( $transaction_id, $result );
-
-            _report "Result is $result\n" if $_dev_mode;
-        }
-        elsif ($command eq 'g')
-        {
-            _release_the_hounds();
-            return;
-        }
-        elsif ($command =~ /^b (.+)$/) # set breakpoints from proto
-        {
-            _process_new_breakpoints( $1 );
-        }
-        elsif ($command =~ /^p (.+)$/) # Run to cursor
-        {
-            _set_run_to_cursor_breakpoint( $1 );
-            _release_the_hounds();
-            return;
-        }
-        elsif ($command eq 'o') # over,
-        {
-            my $current_frame = _get_current_stack_frame;
-            if (_is_use_frame( $current_frame ))
-            {
-                $current_frame->{single} = STEP_INTO;
-                $DB::single = STEP_CONTINUE;
-            }
-            else
-            {
-                $DB::single = STEP_OVER;
-            }
-            return;
-        }
-        elsif ($command =~ /^getchildren (.+)$/) # expand,
-        {
-            _get_reference_subelements( $1 );
-        }
-        elsif ($command =~ /^get_source (.+)$/) # get eval/file source
-        {
-            _get_file_source_handler( $1 );
-        }
-        elsif ($command eq 'u') # step out
-        {
-            my $current_frame = _get_current_stack_frame;
-            if (_is_use_frame( $current_frame ))
-            {
-                $current_frame->{single} = STEP_CONTINUE;
-            }
-            $DB::single = STEP_CONTINUE;
-
-            return;
-        }
-        else
-        {
-            $DB::single = STEP_INTO;
-            return;
-        }
+        _process_command( _get_next_command ) || return;
     }
 }
 
@@ -1493,6 +1538,9 @@ sub sub_handler
     {
         $_internal_process = 1;
 
+        _process_command( _get_next_command ) while _can_read;
+        $old_db_single = $DB::single; # might be overriden in commands
+
         $DB::single = STEP_CONTINUE;
 
         $stack_frame = _enter_frame( $old_db_single );
@@ -1726,6 +1774,9 @@ else
     die "Error connecting to $ENV{PERL5_DEBUG_HOST}:$ENV{PERL5_DEBUG_PORT}" unless $_debug_socket;
 }
 $_debug_socket->autoflush( 1 );
+$_debug_socket_select = IO::Select->new();
+$_debug_socket_select->add( $_debug_socket );
+
 print STDERR "Connected.\n";
 
 push @$_stack_frames, {

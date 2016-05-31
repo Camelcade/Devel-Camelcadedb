@@ -24,10 +24,17 @@ sub first2
     say '-first2';
 }
 
+sub silent {
+    my $test = time;
+}
+
 sub first
 {
     say '+First';
-    first2;
+    while(){
+        silent;
+        sleep( 1 );
+    }
     say '-First';
 }
 
