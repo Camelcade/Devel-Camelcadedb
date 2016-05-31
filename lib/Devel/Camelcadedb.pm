@@ -1,3 +1,6 @@
+package Devel::Camelcadedb;
+our $VERSION = "1.6.1.2";
+
 # http://perldoc.perl.org/DB.html
 # http://perldoc.perl.org/perldebug.html
 # http://perldoc.perl.org/perldebtut.html
@@ -11,7 +14,7 @@ use PadWalker qw/peek_my peek_our/;
 use Scalar::Util;
 use Encode;
 use overload;
-our $VERSION = "1.6.1.0";
+use Carp;
 
 #sub FLAG_REPORT_GOTO() {0x80;}
 
@@ -1255,6 +1258,18 @@ sub _set_break_points_for_file
     _switch_context( $old_context );
 }
 
+#sub mydie
+#{
+#    my ($msg) = @_;
+#    print "$msg\n";
+#    print Carp::longmess;
+#    foreach my $key (sort keys %::)
+#    {
+#        print $key."\n" if $key =~ /^_</;
+#    }
+#    exit -1;
+#}
+
 sub _calc_real_path
 {
     my $path = shift;
@@ -1268,9 +1283,9 @@ sub _calc_real_path
     else
     {
         $real_path = eval {Cwd::realpath( $path )};
-        if (my $e = $@)
+        unless ($real_path)
         {
-            _report "Error on getting real path for $path, $e" if $_dev_mode;
+            _report 'Unable to find real path for %s use as it is', $path;
             $real_path = $path;
         }
         $real_path =~ s{\\}{/}g;
