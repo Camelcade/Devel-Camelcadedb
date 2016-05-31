@@ -1,8 +1,9 @@
 Revision history for Devel-Camelcadedb
 
-1.6.2
+1.6.1.2
+        Fixed problem with debugging flow after exception been thrown
         Fixed problem with Cwd::realpath failure without an exception on linux systems
 
-1.6.1    23 May 2016
+1.6.1.1    23 May 2016
         First version, released on an unsuspecting world.
 

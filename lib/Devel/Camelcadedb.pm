@@ -14,7 +14,7 @@ use PadWalker qw/peek_my peek_our/;
 use Scalar::Util;
 use Encode;
 use overload;
-use Carp;
+#use Carp;
 
 #sub FLAG_REPORT_GOTO() {0x80;}
 
@@ -675,7 +675,7 @@ sub _render_variables
 
 sub _get_current_stack_frame
 {
-    return $_stack_frames->[0];
+    return $_stack_frames->[-1];
 }
 
 sub _send_data_to_debugger
@@ -792,13 +792,24 @@ sub _is_use_frame
     return $is_use_block;
 }
 
-sub _release_the_hounds
+sub _set_frames_single
 {
+    my ($new_value) = @_;
     foreach my $frame (@{$_stack_frames})
     {
-        $frame->{single} = STEP_CONTINUE;
+        $frame->{single} = $new_value;
     }
-    $DB::single = STEP_CONTINUE;
+    $DB::single = $new_value;
+}
+
+sub _hold_the_line
+{
+    _set_frames_single( STEP_INTO );
+}
+
+sub _release_the_hounds
+{
+    _set_frames_single( STEP_CONTINUE );
 }
 
 sub _event_handler
@@ -918,7 +929,7 @@ sub _enter_frame
         subname => $DB::sub,
         single  => $old_db_single,
     };
-    unshift @$_stack_frames, $new_stack_frame;
+    push @{$_stack_frames}, $new_stack_frame;
     _apply_queued_breakpoints() if $ready_to_go;
     return $new_stack_frame;
 }
@@ -927,7 +938,7 @@ sub _enter_frame
 sub _exit_frame
 {
     $_internal_process = 1;
-    my $frame = shift @$_stack_frames;
+    my $frame = pop @$_stack_frames;
     $frame_prefix = $frame_prefix_step x (scalar @$_stack_frames);
     _report "Leaving frame %s, setting single to %s", (scalar @$_stack_frames + 1),
         $frame->{single} if $_debug_sub_handler && $_dev_mode;
@@ -1285,7 +1296,7 @@ sub _calc_real_path
         $real_path = eval {Cwd::realpath( $path )};
         unless ($real_path)
         {
-            _report 'Unable to find real path for %s use as it is', $path;
+            _report 'Unable to find real path for %s use as it is', $path if $_dev_mode;
             $real_path = $path;
         }
         $real_path =~ s{\\}{/}g;
@@ -1497,12 +1508,22 @@ sub sub_handler
         $_internal_process = 0;
     }
 
+    my $stack_pointer = $#$_stack_frames;
+
     my $wantarray = wantarray;
 
     if ($DB::single == STEP_OVER)
     {
-        _report "Disabling step in in subcalls\n" if $_debug_sub_handler && $_dev_mode;
+        _report "Disabling step in in subcalls, will restore %s\n",
+            $_stack_frames->[-1]->{single}
+            if $_debug_sub_handler && $_dev_mode;
         $DB::single = STEP_CONTINUE;
+
+        #        my $die_handler = $SIG{__DIE__};
+        #        local $SIG{__DIE__} = sub{
+        #            _hold_the_line;
+        #            goto &$die_handler if $die_handler;
+        #        };
     }
     else
     {
@@ -1513,7 +1534,7 @@ sub sub_handler
     {
         no strict 'refs';
         &$DB::sub;
-
+        $#$_stack_frames = $stack_pointer;
         if ($stack_frame)
         {
             _exit_frame();
@@ -1529,6 +1550,7 @@ sub sub_handler
     {
         no strict 'refs';
         my @result = &$DB::sub;
+        $#$_stack_frames = $stack_pointer;
         if ($stack_frame)
         {
             _exit_frame();
@@ -1543,6 +1565,7 @@ sub sub_handler
     {
         no strict 'refs';
         my $result = &$DB::sub;
+        $#$_stack_frames = $stack_pointer;
         if ($stack_frame)
         {
             _exit_frame();
