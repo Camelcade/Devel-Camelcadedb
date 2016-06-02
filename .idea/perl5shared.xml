@@ -6,7 +6,5 @@
         <option value="file://$PROJECT_DIR$/lib" />
       </list>
     </option>
-    <option name="PERL_TIDY_PATH" value="C:\usr\bin\perltidy.bat" />
-    <option name="PERL_CRITIC_PATH" value="C:\Strawberry\perl\site\bin\perlcritic.bat" />
   </component>
 </project>
