@@ -931,7 +931,7 @@ sub _get_next_command
 
 sub _can_read
 {
-    return length( $input_buffer ) > 0 || scalar $_debug_socket_select->can_read( 0 );
+    return length( $input_buffer ) > 0 || ($_debug_socket && $_debug_socket_select && scalar $_debug_socket_select->can_read( 0 ));
 }
 
 sub _event_handler
