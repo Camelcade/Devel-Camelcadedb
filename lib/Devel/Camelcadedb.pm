@@ -15,6 +15,7 @@ use PadWalker qw/peek_my peek_our/;
 use Scalar::Util;
 use Encode;
 use overload;
+use Hash::StoredIterator;
 #use Carp;
 
 #sub FLAG_REPORT_GOTO() {0x80;}
@@ -409,7 +410,10 @@ sub _get_reference_subelements
         }
         elsif ($reftype eq 'HASH')
         {
+            my $hash_iterator = Hash::StoredIterator::hash_get_iterator( $source_data );
             my @keys = sort keys %$source_data;
+            Hash::StoredIterator::hash_set_iterator( $source_data, $hash_iterator );
+
             if ($#keys >= $offset)
             {
                 my $last_index = $offset + $size;
@@ -552,7 +556,10 @@ sub _get_reference_descriptor
     }
     elsif ($reftype eq 'HASH')
     {
+        my $hash_iterator = Hash::StoredIterator::hash_get_iterator( $value );
         $size = scalar keys %$value;
+        Hash::StoredIterator::hash_set_iterator( $value, $hash_iterator );
+
         $value = sprintf "size = %s", $size;
         $expandable = $size ? \1 : \0;
     }
