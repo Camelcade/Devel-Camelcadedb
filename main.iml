@@ -20,7 +20,7 @@
         <SOURCES />
       </library>
     </orderEntry>
-    <orderEntry type="jdk" jdkName="Perl v5.22.0 (MSWin32-x64-multi-thread)" jdkType="Perl5 Interpreter" />
+    <orderEntry type="jdk" jdkName="Perl" jdkType="Perl5 Interpreter" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
 </module>

@@ -624,57 +624,6 @@ sub _escape_scalar
     return $scalar;
 }
 
-sub _render_variables
-{
-    my ($vars_hash) = @_;
-    my $result = '';
-
-    foreach my $variable (keys %$vars_hash)
-    {
-        my $value = $vars_hash->{$variable};
-
-        my $reftype = Scalar::Util::reftype $value;
-        my $ref = ref $value;
-        my $appendix = '';
-
-        if ($reftype eq 'SCALAR')
-        {
-            $value = $$value // '_UNDEF_';
-        }
-        elsif ($reftype eq 'ARRAY')
-        {
-            $appendix = sprintf '[%s]', scalar @$value;
-            my @elements = @$value;
-            if (@elements > 1000)
-            {
-                splice @elements, 3; # should be a 1000 here and method to get the rest
-                push @elements, '...'
-            }
-            $value = sprintf "(%s)", join ',', map { $_ // '__UNDEF__'} @elements;
-        }
-        elsif ($reftype eq 'HASH')
-        {
-            my @elements = sort keys %$value; # sorting is necessary to iterate and get data frame
-            $appendix = sprintf '{%s}', scalar @elements;
-
-            if (@elements > 1000)
-            {
-                splice @elements, 3; # should be a 1000 here and method to get the rest
-                push @elements, '...'
-            }
-            $value = sprintf "(\n%s\n)", join ",\n", map { "\t\t".$_." => ".$value->{$_}} @elements;
-        }
-        elsif (ref $value eq 'REF')
-        {
-            $value = $$value;
-        }
-
-        $result .= "\t$ref $variable$appendix = $value\n";
-    }
-
-    return $result;
-}
-
 sub _get_current_stack_frame
 {
     return $_stack_frames->[-1];
