@@ -120,6 +120,12 @@ my $_script_charset = 'utf8';   # all sources and strings without utf flag will 
 
 my $_skip_run_stop = 0; # flag for skipping forced stop on run phase
 
+# this enables pausing and breakpoints setting while script is running, gives moderate overhead
+my $_enable_noninteractive_mode = 0;
+
+# this enables attemp to set a breakpoint on each leaving/entering sub, gives large overhead, proportional number of breakpoints
+my $_enable_compile_time_breakpoints = 0;
+
 my $_debug_socket;
 my $_debug_packed_address;
 my IO::Select $_debug_socket_select;
@@ -932,7 +938,7 @@ sub _enter_frame
         single  => $old_db_single,
     };
     push @{$_stack_frames}, $new_stack_frame;
-    _apply_queued_breakpoints() if $ready_to_go;
+    _set_break_points_for_files() if $_enable_compile_time_breakpoints && $ready_to_go;
     return $new_stack_frame;
 }
 
@@ -944,7 +950,7 @@ sub _exit_frame
     $frame_prefix = $frame_prefix_step x (scalar @$_stack_frames);
     _report "Leaving frame %s, setting single to %s", (scalar @$_stack_frames + 1),
         $frame->{single} if $_debug_sub_handler && $_dev_mode;
-    _apply_queued_breakpoints() if $ready_to_go;
+    _set_break_points_for_files() if $_enable_compile_time_breakpoints && $ready_to_go;
     $DB::single = $frame->{single};
     $_internal_process = 0;
 }
@@ -972,27 +978,6 @@ sub _get_perl_file_id_by_real_path
 }
 
 
-sub _get_perl_line_breakpoints_map_by_file_id
-{
-    my ($file_id) = @_;
-
-    unless (defined $file_id)
-    {
-        _dump_stack && _dump_frames;
-        die "Unitialized file id";
-    }
-
-    my $glob = $::{"_<$file_id"};
-    return $glob ? *$glob{HASH} : undef;
-}
-
-sub _get_perl_source_lines_by_file_id
-{
-    my ($file_id) = @_;
-    return unless $file_id;
-    my $glob = $::{"_<$file_id"};
-    return $glob && *$glob{ARRAY} && scalar @{*$glob{ARRAY}} ? *$glob{ARRAY} : undef;
-}
 
 sub _get_real_path_by_normalized_perl_file_id
 {
@@ -1166,6 +1151,9 @@ sub _set_up_debugger
     $_script_charset = $set_up_data->{charset};
     _process_breakpoints_descriptors( $set_up_data->{breakpoints} );
 
+    $_enable_compile_time_breakpoints = 1 if $set_up_data->{enableCompileTimeBreakpoints};
+    $_enable_noninteractive_mode = 1 if $set_up_data->{enableNonInteractiveMode};
+
     my $start_mode = $set_up_data->{startMode};
 
     if ($start_mode eq 'RUN')
@@ -1208,35 +1196,40 @@ sub _process_breakpoints_descriptors
         $_loaded_breakpoints{$real_path}->{$line} = $descriptor;
         $_queued_breakpoints_files{$real_path} = 1;
     }
-    _apply_queued_breakpoints();
+    _set_break_points_for_files() if $ready_to_go;
 }
 
-#
-# Checks list of loaded and unset breakpoints
-#
-sub _apply_queued_breakpoints
-{
-    return unless $ready_to_go;
-    my $files = [ keys %_queued_breakpoints_files ];
-    return unless @{$files};
-    _set_break_points_for_files( $files );
-}
 
 sub _set_break_points_for_files
 {
+    return unless $ready_to_go;
     my ($paths_array) = @_;
 
+    $paths_array = [ keys %_queued_breakpoints_files ] unless $paths_array;
     $paths_array = [ $paths_array ] unless ref $paths_array;
+    return unless @{$paths_array};
 
     my $default_context = undef;
 
     foreach my $real_path (@{$paths_array})
     {
         _report "Setting breakpoints for %s", $real_path if $_dev_mode;
-        my $perl_file_id = _get_perl_file_id_by_real_path( $real_path ) or next;
+
+        # mapping real path to file id
+        my $perl_file_id = $real_path =~ /^\(eval \d+\)/
+            ? $real_path
+            : exists $_paths_to_perl_file_id_map{$real_path} ? $_paths_to_perl_file_id_map{$real_path} : next;
+
+        # getting perl source lines and breakpoints
+        my $glob = $::{"_<$perl_file_id"};
+        next unless $glob && *{$glob}{ARRAY} && scalar @{*{$glob}{ARRAY}};
+        my $perl_source_lines = *{$glob}{ARRAY};
+        my $perl_breakpoints_map = *{$glob}{HASH};
+
+        # getting breakpoints passed from the IDE
         my $loaded_breakpoints_descriptors = _get_loaded_breakpoints_by_real_path( $real_path ) or next;
-        my $perl_source_lines = _get_perl_source_lines_by_file_id( $perl_file_id ) or next;
-        my $perl_breakpoints_map = _get_perl_line_breakpoints_map_by_file_id( $perl_file_id ) or next;
+
+        # switching context
         my $old_context = _switch_context( $perl_file_id );
         $default_context //= $old_context;
 
@@ -1333,7 +1326,7 @@ sub step_handler
     $^W = 0;      # warnings are off
 
     # set breakpoints for evals if any appeared
-    _apply_queued_breakpoints() if $ready_to_go;
+    _set_break_points_for_files() if $ready_to_go;
 
     # updating current position
     my @caller = caller();
@@ -1470,7 +1463,7 @@ sub template_handler
         _report "Mapped template: %s to eval %s", $real_path, $eval_target if $_dev_mode;
 
         $_queued_breakpoints_files{$eval_target} = 1;
-        _apply_queued_breakpoints();
+        _set_break_points_for_files() if $ready_to_go;
     }
     else
     {
@@ -1489,7 +1482,7 @@ sub sub_handler
     {
         $_internal_process = 1;
 
-        _process_command( _get_next_command ) while _can_read;
+        _process_command( _get_next_command ) while $_enable_noninteractive_mode && _can_read;
         $old_db_single = $DB::single; # might be overriden in commands
 
         $DB::single = STEP_CONTINUE;
@@ -1647,8 +1640,7 @@ sub load_handler
         if $_debug_load_handler && $_dev_mode
     ;
 
-    _set_break_points_for_files( $real_path ) if $ready_to_go; # this is necessary, because perl internally re-initialize bp hash
-    _apply_queued_breakpoints() if $ready_to_go;
+    _set_break_points_for_files() if $ready_to_go;
 
     $_internal_process = $old_internal_process;
 
