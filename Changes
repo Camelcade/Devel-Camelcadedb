@@ -1,5 +1,9 @@
 Revision history for Devel-Camelcadedb
 
+1.6.1.3
+        Improved performance of breakpoints setting
+        Introduced IDE-side options for non-interactive mode and compile-time breakpoints (since 2.101)
+
 1.6.1.2
         Fixed problem with debugging flow after exception been thrown
         Fixed problem with Cwd::realpath failure without an exception on linux systems

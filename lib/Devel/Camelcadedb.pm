@@ -1,5 +1,5 @@
 package Devel::Camelcadedb;
-our $VERSION = "1.6.1.2";
+our $VERSION = "1.6.1.3";
 
 # http://perldoc.perl.org/DB.html
 # http://perldoc.perl.org/perldebug.html
@@ -950,7 +950,6 @@ sub _exit_frame
     $frame_prefix = $frame_prefix_step x (scalar @$_stack_frames);
     _report "Leaving frame %s, setting single to %s", (scalar @$_stack_frames + 1),
         $frame->{single} if $_debug_sub_handler && $_dev_mode;
-    _set_break_points_for_files() if $_enable_compile_time_breakpoints && $ready_to_go;
     $DB::single = $frame->{single};
     $_internal_process = 0;
 }
