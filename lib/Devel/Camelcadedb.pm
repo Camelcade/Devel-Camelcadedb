@@ -1,5 +1,5 @@
 package Devel::Camelcadedb;
-our $VERSION = "1.6.1.3";
+our $VERSION = "1.6.1.4";
 
 # http://perldoc.perl.org/DB.html
 # http://perldoc.perl.org/perldebug.html
@@ -1240,6 +1240,8 @@ sub _set_break_points_for_files
         {
             my $breakpoint_descriptor = $loaded_breakpoints_descriptors->{$real_line};
             _report "Processing descriptor %s, %s, %s", @{$breakpoint_descriptor}{qw/path line remove/} if $_dev_mode;
+
+            next if $real_line > $#$perl_source_lines; # compiled incompletely
 
             if ($breakpoint_descriptor->{remove})
             {

@@ -15,7 +15,9 @@ sub step2 {step1}
 sub step3 {step2}
 sub step4 {step3}
 sub step5 {step4}
-sub step6 {step5}
+sub step6 {
+    step5
+}
 sub step7 {step6}
 sub step8 {step7}
 sub step9 {step8}
@@ -29,3 +31,5 @@ for (0 .. 200_000)
 my $endtime = Time::HiRes::time();
 
 say sprintf 'Finished in %s msec', ($endtime - $starttime);
+
+use Carp;
