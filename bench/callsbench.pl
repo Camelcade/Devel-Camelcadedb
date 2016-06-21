@@ -6,7 +6,7 @@ use v5.10;
 
 # this is a benchmarking script for checking debugger invocations overhead
 
-# debug 25.96 sec, run 0.104 sec - 19/june/2016, 11:00 MSK
+# debug 26.76 sec, run 0.104 sec - 19/june/2016, 11:00 MSK
 
 my $starttime = Time::HiRes::time();
 

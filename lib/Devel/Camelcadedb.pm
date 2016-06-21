@@ -20,10 +20,11 @@ use Hash::StoredIterator;
 
 #sub FLAG_REPORT_GOTO() {0x80;}
 
-sub STEP_CONTINUE() {0;}
-sub STEP_INTO() {1;}
-sub STEP_OVER() {2;}
-
+use constant {
+    STEP_CONTINUE => 0,
+    STEP_INTO     => 1,
+    STEP_OVER     => 2,
+};
 
 # Each array @{"::_<$filename"} holds the lines of $filename for a file compiled by Perl. The same is also true for evaled
 # strings that contain subroutines, or which are currently being executed. The $filename for evaled strings looks like
@@ -985,25 +986,12 @@ sub _get_perl_line_breakpoints_map_by_file_id
     return $glob ? *$glob{HASH} : undef;
 }
 
-sub _get_perl_line_breakpoints_map_by_real_path
-{
-    my ($real_path) = @_;
-    my $perl_file_id = _get_perl_file_id_by_real_path( $real_path );
-    return $perl_file_id ? _get_perl_line_breakpoints_map_by_file_id( $perl_file_id ) : undef;
-}
-
 sub _get_perl_source_lines_by_file_id
 {
     my ($file_id) = @_;
     return unless $file_id;
     my $glob = $::{"_<$file_id"};
     return $glob && *$glob{ARRAY} && scalar @{*$glob{ARRAY}} ? *$glob{ARRAY} : undef;
-}
-
-sub _get_perl_source_lines_by_real_path
-{
-    my ($real_path) = @_;
-    return _get_perl_source_lines_by_file_id( _get_perl_file_id_by_real_path( $real_path ) );
 }
 
 sub _get_real_path_by_normalized_perl_file_id
@@ -1229,45 +1217,52 @@ sub _process_breakpoints_descriptors
 sub _apply_queued_breakpoints
 {
     return unless $ready_to_go;
-    foreach my $file_path (keys %_queued_breakpoints_files)
-    {
-        _set_break_points_for_file( $file_path );
-    }
+    my $files = [ keys %_queued_breakpoints_files ];
+    return unless @{$files};
+    _set_break_points_for_files( $files );
 }
 
-sub _set_break_points_for_file
+sub _set_break_points_for_files
 {
-    my ($real_path) = @_;
+    my ($paths_array) = @_;
 
-    _report "Setting breakpoints for %s", $real_path if $_dev_mode;
-    my $loaded_breakpoints_descriptors = _get_loaded_breakpoints_by_real_path( $real_path ) or return;
-    my $perl_source_lines = _get_perl_source_lines_by_real_path( $real_path ) or return;
-    my $perl_breakpoints_map = _get_perl_line_breakpoints_map_by_real_path( $real_path ) or return;
-    my $perl_file_id = _get_perl_file_id_by_real_path( $real_path );
-    my $old_context = _switch_context( $perl_file_id );
+    $paths_array = [ $paths_array ] unless ref $paths_array;
 
-    #    print STDERR "Attempting to set breakpoints for $real_path\n";
-    my @lines = keys %$loaded_breakpoints_descriptors;
-    my $breakpoints_left = scalar @lines;
+    my $default_context = undef;
 
-    foreach my $real_line (@lines)
+    foreach my $real_path (@{$paths_array})
     {
-        my $breakpoint_descriptor = $loaded_breakpoints_descriptors->{$real_line};
-        _report "Processing descriptor %s, %s, %s", @$breakpoint_descriptor{qw/path line remove/} if $_dev_mode;
+        _report "Setting breakpoints for %s", $real_path if $_dev_mode;
+        my $perl_file_id = _get_perl_file_id_by_real_path( $real_path ) or next;
+        my $loaded_breakpoints_descriptors = _get_loaded_breakpoints_by_real_path( $real_path ) or next;
+        my $perl_source_lines = _get_perl_source_lines_by_file_id( $perl_file_id ) or next;
+        my $perl_breakpoints_map = _get_perl_line_breakpoints_map_by_file_id( $perl_file_id ) or next;
+        my $old_context = _switch_context( $perl_file_id );
+        $default_context //= $old_context;
 
-        if ($breakpoint_descriptor->{remove})
+        #    print STDERR "Attempting to set breakpoints for $real_path\n";
+        my @lines = keys %{$loaded_breakpoints_descriptors};
+        my $breakpoints_left = scalar @lines;
+
+        foreach my $real_line (@lines)
         {
-            $breakpoints_left -= _reset_breakpoint( $breakpoint_descriptor, $real_line, $perl_breakpoints_map );
+            my $breakpoint_descriptor = $loaded_breakpoints_descriptors->{$real_line};
+            _report "Processing descriptor %s, %s, %s", @{$breakpoint_descriptor}{qw/path line remove/} if $_dev_mode;
+
+            if ($breakpoint_descriptor->{remove})
+            {
+                $breakpoints_left -= _reset_breakpoint( $breakpoint_descriptor, $real_line, $perl_breakpoints_map );
+            }
+            else
+            {
+                $breakpoints_left -= _set_breakpoint( $breakpoint_descriptor, $real_line, $perl_breakpoints_map,
+                    $perl_source_lines );
+            }
         }
-        else
-        {
-            $breakpoints_left -= _set_breakpoint( $breakpoint_descriptor, $real_line, $perl_breakpoints_map,
-                $perl_source_lines );
-        }
+
+        delete $_queued_breakpoints_files{$real_path} unless $breakpoints_left;
     }
-
-    delete $_queued_breakpoints_files{$real_path} unless $breakpoints_left;
-    _switch_context( $old_context );
+    _switch_context( $default_context );
 }
 
 #sub mydie
@@ -1652,7 +1647,7 @@ sub load_handler
         if $_debug_load_handler && $_dev_mode
     ;
 
-    _set_break_points_for_file( $real_path ) if $ready_to_go; # this is necessary, because perl internally re-initialize bp hash
+    _set_break_points_for_files( $real_path ) if $ready_to_go; # this is necessary, because perl internally re-initialize bp hash
     _apply_queued_breakpoints() if $ready_to_go;
 
     $_internal_process = $old_internal_process;
