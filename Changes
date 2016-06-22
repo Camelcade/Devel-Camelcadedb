@@ -1,5 +1,8 @@
 Revision history for Devel-Camelcadedb
 
+1.6.1.5
+        Added initialization debugger code support
+
 1.6.1.3
         Improved performance of breakpoints setting
         Introduced IDE-side options for non-interactive mode and compile-time breakpoints (since 2.101)

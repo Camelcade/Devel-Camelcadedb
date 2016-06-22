@@ -1,5 +1,5 @@
 package Devel::Camelcadedb;
-our $VERSION = "1.6.1.4";
+our $VERSION = "1.6.1.5";
 
 # http://perldoc.perl.org/DB.html
 # http://perldoc.perl.org/perldebug.html
@@ -1155,6 +1155,12 @@ sub _set_up_debugger
 
     my $start_mode = $set_up_data->{startMode};
 
+    if ($set_up_data->{initCode})
+    {
+        eval $set_up_data->{initCode};
+        die "*** Debugger init code error:\n$@" if $@;
+    }
+
     if ($start_mode eq 'RUN')
     {
         return STEP_CONTINUE;
@@ -1756,16 +1762,17 @@ _send_data_to_debugger( +{
 _report "Waiting for set up data..." if $_dev_mode;
 my $set_up_data = <$_debug_socket>;
 die "Connection closed" unless defined $set_up_data;
-my $initial_state = _set_up_debugger( $set_up_data );
-
-$_internal_process = 0;
-$ready_to_go = 1;
 
 *DB::DB = \&step_handler;
 *DB::sub = \&sub_handler;
 #*DB::lsub = \&lsub_handler;
 *DB::postponed = \&load_handler;
 #*DB::goto = \&goto_handler;
+
+my $initial_state = _set_up_debugger( $set_up_data );
+
+$_internal_process = 0;
+$ready_to_go = 1;
 
 $DB::single = $initial_state;
 
