@@ -1,5 +1,8 @@
 Revision history for Devel-Camelcadedb
 
+1.6.1.6
+        Fixed possible problems with destructor corrupting sub result
+
 1.6.1.5
         Added initialization debugger code support
 
