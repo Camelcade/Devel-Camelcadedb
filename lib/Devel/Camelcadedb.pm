@@ -113,8 +113,9 @@ my $glob_slots = join '|', @glob_slots;
 my $_dev_mode = 0;                              # enable this to get verbose STDERR output from process
 my $_debug_log_fh = *STDERR;                    # debug log fh. If omited, file will be created
 my $_debug_log_filename = 'current_debug.log';
-my $_debug_sub_handler = 0;                     # debug entering/leaving subs, works in dev mode
+my $_debug_sub_handler = 1;                     # debug entering/leaving subs, works in dev mode
 my $_debug_load_handler = 0;                    # debug modules loading
+my $_debug_breakpoints = 0;                     # debug breakpoints setting
 
 my $_script_charset = 'utf8';   # all sources and strings without utf flag will be encoded from this encoding to the utf
 
@@ -1012,7 +1013,7 @@ sub _get_loaded_breakpoints_by_real_path
 
     if ($_loaded_breakpoints{$real_path})
     {
-        _report "Found real breakpoints" if $_dev_mode;
+        _report "Found real breakpoints" if $_dev_mode && $_debug_breakpoints;
         %$result = %{$_loaded_breakpoints{$real_path}};
     }
 
@@ -1020,15 +1021,15 @@ sub _get_loaded_breakpoints_by_real_path
     if (my $substituted_file_descriptor = $_evals_to_templates_map{$real_path})
     {
         my ($template_path, $lines_map) = @$substituted_file_descriptor{qw/path lines_map/};
-        _report "Found template file %s", $template_path if $_dev_mode;
+        _report "Found template file %s", $template_path if $_dev_mode && $_debug_breakpoints;
         if (my $template_breakpoints = $_loaded_breakpoints{$template_path})
         {
-            _report "Found template breakpoints" if $_dev_mode;
+            _report "Found template breakpoints" if $_dev_mode && $_debug_breakpoints;
             foreach my $line (keys %$template_breakpoints)
             {
                 if (my $mapped_line = $lines_map->{$line})
                 {
-                    _report "Got mapped breakpoint %s => %s", $line, $mapped_line if $_dev_mode;
+                    _report "Got mapped breakpoint %s => %s", $line, $mapped_line if $_dev_mode && $_debug_breakpoints;
                     $result->{$mapped_line} //= $template_breakpoints->{$line};
                 }
             }
@@ -1127,7 +1128,7 @@ sub _set_breakpoint
     };
 
     _report 'Setting breakpoint to %s, real line %s, %s', $breakpoint_descriptor->{path}, $real_line,
-        $perl_source_lines->[$real_line] if $_dev_mode;
+        $perl_source_lines->[$real_line] if $_dev_mode && $_debug_breakpoints;
 
     if (!defined $perl_source_lines->[$real_line] || $perl_source_lines->[$real_line] == 0)
     {
