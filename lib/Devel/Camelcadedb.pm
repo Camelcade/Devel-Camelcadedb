@@ -1,5 +1,5 @@
 package Devel::Camelcadedb;
-our $VERSION = "1.6.1.5";
+our $VERSION = "1.6.1.6";
 
 # http://perldoc.perl.org/DB.html
 # http://perldoc.perl.org/perldebug.html
@@ -922,14 +922,15 @@ sub _event_handler
 
 sub _enter_frame
 {
-    my ($old_db_single) = @_;
+    my ($old_db_single, $wantarray) = @_;
 
-    _report "Entering frame %s: %s %s-%s-%s",
+    _report "Entering frame %s: %s %s-%s-%s, %s",
         scalar @$_stack_frames + 1,
         $DB::sub,
         $DB::trace // 'undef',
         $DB::signal // 'undef',
         $old_db_single // 'undef',
+            $wantarray ? 'ARRAY' : defined $wantarray ? 'SCALAR' : 'VOID'
         if $_debug_sub_handler && $_dev_mode;
 
     $frame_prefix = $frame_prefix_step x (scalar @$_stack_frames + 1);
@@ -1486,6 +1487,8 @@ sub sub_handler
     my $stack_frame = undef;
 
     my $old_db_single = $DB::single;
+    my $wantarray = wantarray;
+
     if (!$_internal_process)
     {
         $_internal_process = 1;
@@ -1495,7 +1498,7 @@ sub sub_handler
 
         $DB::single = STEP_CONTINUE;
 
-        $stack_frame = _enter_frame( $old_db_single );
+        $stack_frame = _enter_frame( $old_db_single, $wantarray );
 
         if ($current_package && $current_package eq 'DB')
         {
@@ -1509,8 +1512,6 @@ sub sub_handler
     }
 
     my $stack_pointer = $#$_stack_frames;
-
-    my $wantarray = wantarray;
 
     if ($DB::single == STEP_OVER)
     {
@@ -1544,9 +1545,9 @@ sub sub_handler
             $DB::single = $old_db_single;
         }
 
-        return $DB::ret = undef;
+        $DB::ret = undef; # return value
     }
-    if ($wantarray)
+    elsif ($wantarray)
     {
         no strict 'refs';
         my @result = &$DB::sub;
@@ -1559,7 +1560,7 @@ sub sub_handler
         {
             $DB::single = $old_db_single;
         }
-        return @DB::ret = @result;
+        @DB::ret = @result; # return value
     }
     else
     {
@@ -1574,7 +1575,7 @@ sub sub_handler
         {
             $DB::single = $old_db_single;
         }
-        return $DB::ret = $result;
+        $DB::ret = $result; # return value
     }
 }
 
