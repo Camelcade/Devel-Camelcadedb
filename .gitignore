@@ -1,1 +1,6 @@
-# Created by .ignore support plugin (hsz.mobi)
+/Makefile
+/MYMETA.*
+/META.*
+/blib/
+/pm_to_blib
+/Devel-Camelcadedb*
