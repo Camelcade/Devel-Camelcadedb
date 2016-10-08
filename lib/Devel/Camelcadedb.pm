@@ -1197,6 +1197,24 @@ sub _set_up_debugger
     }
 }
 
+sub _set_up_after_connect
+{
+    $_debug_socket->autoflush( 1 );
+    $_debug_socket_select = IO::Select->new();
+    $_debug_socket_select->add( $_debug_socket );
+
+    _send_data_to_debugger( +{
+        event   => 'READY',
+        version => $VERSION,
+    } );
+    _report "Waiting for set up data..." if $_dev_mode;
+    my $set_up_data = <$_debug_socket>;
+    die "Connection closed" unless defined $set_up_data;
+
+    $ready_to_go = 1;
+    $DB::single = _set_up_debugger( $set_up_data );
+}
+
 sub _process_new_breakpoints
 {
     my ($json_data) = @_;
@@ -1340,7 +1358,7 @@ sub _switch_context
 # feature is disabled when executing inside DB::DB() , including functions called from it unless $^D & (1<<30) is true.
 sub step_handler
 {
-    return if $_internal_process;
+    return if $_internal_process || !$ready_to_go;
     $_internal_process = 1;
 
     # Save eval failure, command failure, extended OS error, output field
@@ -1714,41 +1732,68 @@ EOM
     exit;
 }
 
-# http://perldoc.perl.org/perlipc.html#Sockets%3a-Client%2fServer-Communication
-if ($ENV{PERL5_DEBUG_ROLE} eq 'server')
+my $_connect_at_start = exists $ENV{PERL5_DEBUG_AUTOSTART} ? $ENV{PERL5_DEBUG_AUTOSTART} : 1;
+
+sub is_connected
 {
-    printf STDERR "Listening for the IDE connection at %s:%s...\n", $ENV{PERL5_DEBUG_HOST}, $ENV{PERL5_DEBUG_PORT};
-    my $_server_socket = IO::Socket::INET->new(
-        Listen    => 1,
-        LocalAddr => $ENV{PERL5_DEBUG_HOST},
-        LocalPort => $ENV{PERL5_DEBUG_PORT},
-        ReuseAddr => 1,
-        Proto     => 'tcp',
-    ) || die "Error binding to $ENV{PERL5_DEBUG_HOST}:$ENV{PERL5_DEBUG_PORT}";
-    $_debug_packed_address = accept( $_debug_socket, $_server_socket );
+    return !!$_debug_socket;
 }
-else
+
+sub _connect
 {
-    foreach my $attempt (1 .. 10)
+    my ($attempts, $allow_fail) = @_;
+    # http://perldoc.perl.org/perlipc.html#Sockets%3a-Client%2fServer-Communication
+    if ($ENV{PERL5_DEBUG_ROLE} eq 'server')
     {
-        printf STDERR "($attempt)Connecting to the IDE from process %s at %s:%s...\n", $$, $ENV{PERL5_DEBUG_HOST},
-            $ENV{PERL5_DEBUG_PORT};
-        $_debug_socket = IO::Socket::INET->new(
-            PeerAddr  => $ENV{PERL5_DEBUG_HOST},
-            PeerPort  => $ENV{PERL5_DEBUG_PORT},
+        printf STDERR "Listening for the IDE connection at %s:%s...\n", $ENV{PERL5_DEBUG_HOST}, $ENV{PERL5_DEBUG_PORT};
+        my $_server_socket = IO::Socket::INET->new(
+            Listen    => 1,
+            LocalAddr => $ENV{PERL5_DEBUG_HOST},
+            LocalPort => $ENV{PERL5_DEBUG_PORT},
             ReuseAddr => 1,
             Proto     => 'tcp',
-        );
-        last if $_debug_socket;
-        sleep( 1 ); # this is kinda hacky
+        ) || die "Error binding to $ENV{PERL5_DEBUG_HOST}:$ENV{PERL5_DEBUG_PORT}";
+        $_debug_packed_address = accept( $_debug_socket, $_server_socket );
     }
-    die "Error connecting to $ENV{PERL5_DEBUG_HOST}:$ENV{PERL5_DEBUG_PORT}" unless $_debug_socket;
+    else
+    {
+        foreach my $attempt (1 .. $attempts)
+        {
+            printf STDERR "($attempt)Connecting to the IDE from process %s at %s:%s...\n", $$, $ENV{PERL5_DEBUG_HOST},
+                $ENV{PERL5_DEBUG_PORT};
+            $_debug_socket = IO::Socket::INET->new(
+                PeerAddr  => $ENV{PERL5_DEBUG_HOST},
+                PeerPort  => $ENV{PERL5_DEBUG_PORT},
+                ReuseAddr => 1,
+                Proto     => 'tcp',
+            );
+            last if $_debug_socket;
+            sleep( 1 ); # this is kinda hacky
+        }
+        die "Error connecting to $ENV{PERL5_DEBUG_HOST}:$ENV{PERL5_DEBUG_PORT}" if !$_debug_socket && !$allow_fail;
+    }
+    _set_up_after_connect() if $_debug_socket;
 }
-$_debug_socket->autoflush( 1 );
-$_debug_socket_select = IO::Select->new();
-$_debug_socket_select->add( $_debug_socket );
 
-print STDERR "Connected.\n";
+sub connect
+{
+    _connect( 1, 1 );
+}
+
+sub disconnect
+{
+    return unless is_connected();
+    $_debug_socket->close();
+    undef $_debug_socket_select;
+    undef $_debug_socket;
+    $ready_to_go = 0;
+}
+
+sub connect_or_reconnect
+{
+    disconnect() if is_connected();
+    _connect( 1, 1 );
+}
 
 # we want disable() to completely bypass the debugger (except for the parts
 # which are required for bookkeeping, like DB::postponed)
@@ -1816,25 +1861,15 @@ foreach my $main_key (keys %::)
     }
 }
 
-_send_data_to_debugger( +{
-        event   => 'READY',
-        version => $VERSION,
-    } );
-_report "Waiting for set up data..." if $_dev_mode;
-my $set_up_data = <$_debug_socket>;
-die "Connection closed" unless defined $set_up_data;
-
 *DB::DB = \&step_handler;
-*DB::sub = \&sub_handler;
-#*DB::lsub = \&lsub_handler;
 *DB::postponed = \&load_handler;
-#*DB::goto = \&goto_handler;
 
-my $initial_state = _set_up_debugger( $set_up_data );
+if ($_connect_at_start)
+{
+    _connect( 10, 0 );
+    enable();
+}
 
 $_internal_process = 0;
-$ready_to_go = 1;
-
-$DB::single = $initial_state;
 
 1; # End of Devel::Camelcadedb
