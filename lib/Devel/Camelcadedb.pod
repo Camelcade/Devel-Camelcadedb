@@ -25,6 +25,43 @@ providing template source file path and reference to the hash of lines map C<< t
         }
     }
 
+=head1 FUNCTIONS
+
+=head2 connect_or_reconnect
+
+    DB::connect_or_reconnect();
+
+Tries to connect to the IDE, use C<is_connected> to check whether the
+attempt was successful. Most useful when setting
+C<$ENV{PERL5_DEBUG_AUTOSTART}> to C<0> to avoid connecting at program
+startup.
+
+=head2 is_connected
+
+    $is_connected = DB::is_connected();
+
+Checks whether there is an active connection to the IDE.
+
+=head2 disconnect
+
+    DB::disconnect();
+
+Disconnects from the IDE.
+
+=head2 disable
+
+    DB::disable();
+
+Disables the most expensive debugger hooks, so execution speed is not
+affacted; the debugger is not functional while disabled, but it can be
+re-enabled at any time.
+
+=head2 enable
+
+    DB::enable();
+
+Re-enables debugging after a C<diable> call.
+
 =head1 AUTHORS
 
 2016 Alexandr Evstigneev  L<hurricup@gmail.com|mailto:hurricup@gmail.com>
