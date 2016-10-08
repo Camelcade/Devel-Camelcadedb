@@ -1767,7 +1767,7 @@ sub _connect
                 ReuseAddr => 1,
                 Proto     => 'tcp',
             );
-            last if $_debug_socket;
+            last if $_debug_socket || $attempt == $attempts;
             sleep( 1 ); # this is kinda hacky
         }
         die "Error connecting to $ENV{PERL5_DEBUG_HOST}:$ENV{PERL5_DEBUG_PORT}" if !$_debug_socket && !$allow_fail;
