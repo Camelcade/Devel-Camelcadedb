@@ -992,7 +992,9 @@ sub _get_real_path_by_normalized_perl_file_id
     if (!exists $_perl_file_id_to_path_map{$perl_file_id})
     {
         no strict 'refs';
-        my $real_path = _calc_real_path( ${*{"::_<$perl_file_id"}}, $perl_file_id );
+        my $path = ${*{"::_<$perl_file_id"}};
+        return '' unless defined $path; # some subs created via XS
+        my $real_path = _calc_real_path( $path, $perl_file_id );
 
         $_perl_file_id_to_path_map{$perl_file_id} = $real_path;
         $_paths_to_perl_file_id_map{$real_path} = $perl_file_id;
