@@ -26,6 +26,23 @@ use constant {
     STEP_OVER     => 2,
 };
 
+use constant {
+    # see PERLDBf_* constants in perl.h
+    DEBUG_ALL             => 0x7ff,
+    DEBUG_SINGLE_STEP_ON  => 0x20,
+    DEBUG_USE_SUB_ADDRESS => 0x40,
+    DEBUG_REPORT_GOTO     => 0x80,
+};
+use constant {
+    # debugger enabled
+    DEBUG_DEFAULT_FLAGS # 0x73f
+       => DEBUG_ALL & ~(DEBUG_USE_SUB_ADDRESS|DEBUG_REPORT_GOTO),
+    # instrument code, but don't call DB::DB (see sub disable for DB::sub)
+    DEBUG_PREPARE_FLAGS # 0x73c
+       => DEBUG_ALL & ~(DEBUG_USE_SUB_ADDRESS|DEBUG_REPORT_GOTO|DEBUG_SINGLE_STEP_ON),
+};
+
+
 # Each array @{"::_<$filename"} holds the lines of $filename for a file compiled by Perl. The same is also true for evaled
 # strings that contain subroutines, or which are currently being executed. The $filename for evaled strings looks like
 # (eval 34) .
@@ -1732,6 +1749,46 @@ $_debug_socket_select = IO::Select->new();
 $_debug_socket_select->add( $_debug_socket );
 
 print STDERR "Connected.\n";
+
+# we want disable() to completely bypass the debugger (except for the parts
+# which are required for bookkeeping, like DB::postponed)
+#
+# setting %^P can disable DB::DB, but the only way to disable DB::sub is to
+# make sure *DB::sub{CODE} is undef, while keeping %DB::sub and $DB::sub
+# intact; the only way to do that is to save the glob slots we want to
+# preserve, undef the glob and then restore the slots
+#
+# DB::lsub and DB::goto are easier, because we don't need to preserve the
+# corresponding scalar/array/hash variables
+my (%_orig_db_sub, %_disabled_db_sub, $_orig_db_lsub);
+
+BEGIN
+{
+    %_orig_db_sub = %_disabled_db_sub = map {
+        ($_ => *DB::sub{$_}) x !!*DB::sub{$_}
+    } qw(SCALAR ARRAY HASH);
+    $_orig_db_sub{CODE} = \&sub_handler;
+    $_orig_db_lsub = undef; # \&lsub_handler
+}
+
+sub enable
+{
+    $^P = DEBUG_DEFAULT_FLAGS;
+    undef *DB::sub;
+    *DB::sub = $_orig_db_sub{$_} for keys %_orig_db_sub;
+    #*DB::lsub = $_orig_db_lsub;
+    #*DB::goto = \&goto_handler;
+}
+
+sub disable
+{
+    $DB::single = 0;
+    $^P = DEBUG_PREPARE_FLAGS;
+    undef *DB::sub;
+    undef *DB::lsub;
+    undef *DB::goto;
+    *DB::sub = $_disabled_db_sub{$_} for keys %_disabled_db_sub;
+}
 
 push @$_stack_frames, {
         subname      => 'SCRIPT',
