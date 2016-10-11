@@ -1199,6 +1199,8 @@ sub _set_up_debugger
 
 sub _set_up_after_connect
 {
+    my ($allow_fail) = @_;
+
     $_debug_socket->autoflush( 1 );
     $_debug_socket_select = IO::Select->new();
     $_debug_socket_select->add( $_debug_socket );
@@ -1209,6 +1211,7 @@ sub _set_up_after_connect
     } );
     _report "Waiting for set up data..." if $_dev_mode;
     my $set_up_data = <$_debug_socket>;
+    return if !defined $set_up_data && $allow_fail;
     die "Connection closed" unless defined $set_up_data;
 
     $ready_to_go = 1;
@@ -1772,7 +1775,7 @@ sub _connect
         }
         die "Error connecting to $ENV{PERL5_DEBUG_HOST}:$ENV{PERL5_DEBUG_PORT}" if !$_debug_socket && !$allow_fail;
     }
-    _set_up_after_connect() if $_debug_socket;
+    _set_up_after_connect( $allow_fail ) if $_debug_socket;
 }
 
 sub connect
