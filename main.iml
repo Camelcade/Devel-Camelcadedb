@@ -20,7 +20,16 @@
         <SOURCES />
       </library>
     </orderEntry>
-    <orderEntry type="jdk" jdkName="Perl" jdkType="Perl5 Interpreter" />
+    <orderEntry type="module-library">
+      <library name="Perl5 library: E:/Repository/IDEA-Perl5-Debugger/lib">
+        <CLASSES>
+          <root url="file://$MODULE_DIR$/lib" />
+        </CLASSES>
+        <JAVADOC />
+        <SOURCES />
+      </library>
+    </orderEntry>
     <orderEntry type="sourceFolder" forTests="false" />
+    <orderEntry type="inheritedJdk" />
   </component>
 </module>

@@ -1,5 +1,5 @@
 package Devel::Camelcadedb;
-our $VERSION = "1.6.1.6";
+our $VERSION = "2017.1";
 
 # http://perldoc.perl.org/DB.html
 # http://perldoc.perl.org/perldebug.html
