@@ -1,5 +1,8 @@
 Revision history for Devel-Camelcadedb
 
+2017.1.1
+        Fixed comments in constant, caused problems in perl 5.10
+
 2017.1
         New versioning.
         Added uWSGI + Plack support https://github.com/Camelcade/Perl5-IDEA-Debugger/pull/26
