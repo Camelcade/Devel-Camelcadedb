@@ -1,5 +1,6 @@
 package Devel::Camelcadedb;
-our $VERSION = "2017.1.1";
+# must be quoted to work correctly with JSON protocol
+our $VERSION = "2017.100.2";
 
 # http://perldoc.perl.org/DB.html
 # http://perldoc.perl.org/perldebug.html
