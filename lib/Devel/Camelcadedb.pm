@@ -1,6 +1,6 @@
 package Devel::Camelcadedb;
 # must be quoted to work correctly with JSON protocol
-our $VERSION = "2017.100.2";
+our $VERSION = "2017.100.3";
 
 # http://perldoc.perl.org/DB.html
 # http://perldoc.perl.org/perldebug.html
@@ -16,6 +16,7 @@ use PadWalker qw/peek_my peek_our/;
 use Scalar::Util;
 use Encode;
 use overload;
+use PerlIO;
 use Hash::StoredIterator;
 #use Carp;
 
@@ -398,7 +399,7 @@ sub _get_reference_subelements
 
     my $source_data;
 
-    if ($key =~ /^\*(.+?)(?:\{($glob_slots)\})?$/) # hack for globs
+    if ($key =~ /^\*(.+?)(?:\{($glob_slots)\})?$/) # hack for globs by names
     {
         no strict 'refs';
         my ( $name, $slot) = ($1, $2);
@@ -418,7 +419,6 @@ sub _get_reference_subelements
     {
         $source_data = $_references_cache{$key};
     }
-
     if ($source_data)
     {
         my $reftype = Scalar::Util::reftype( $source_data );
@@ -456,6 +456,7 @@ sub _get_reference_subelements
         elsif ($reftype eq 'GLOB')
         {
             no strict 'refs';
+
             foreach my $glob_slot (@glob_slots)
             {
                 my $reference = *$source_data{$glob_slot};
@@ -469,9 +470,9 @@ sub _get_reference_subelements
                     $desciptor->{size} = 0;
                 }
 
-                $desciptor->{key} = $key."{$glob_slot}";
                 push @$data, $desciptor;
             }
+
         }
         else
         {
@@ -553,16 +554,21 @@ sub _get_reference_descriptor
     my $is_blessed = $ref && Scalar::Util::blessed( $value ) ? \1 : \0;
     my $ref_depth = 0;
     my $is_utf = \0;
+    my $layers = undef;
+
+    my $tied;
 
     if (!$reftype)
     {
         $type = "SCALAR";
+        $tied = tied $value;
         $is_utf = defined $value && utf8::is_utf8( $value ) ? \1 : \0;
         $value = defined $value ? "\"$value\"" : 'undef'; #_escape_scalar(
         $key //= 'undef';
     }
     elsif ($reftype eq 'SCALAR')
     {
+        $tied = tied $$value;
         $is_utf = defined $$value && utf8::is_utf8( $$value ) ? \1 : \0;
         $value = defined $$value ? "\"$$value\"" : 'undef'; #_escape_scalar(
     }
@@ -575,11 +581,13 @@ sub _get_reference_descriptor
     elsif ($reftype eq 'ARRAY')
     {
         $size = scalar @$value;
+        $tied = tied @$value;
         $value = sprintf "size = %s", $size;
         $expandable = $size ? \1 : \0;
     }
     elsif ($reftype eq 'HASH')
     {
+        $tied = tied %$value;
         my $hash_iterator = Hash::StoredIterator::hash_get_iterator( $value );
         $size = scalar keys %$value;
         Hash::StoredIterator::hash_set_iterator( $value, $hash_iterator );
@@ -590,9 +598,10 @@ sub _get_reference_descriptor
     elsif ($reftype eq 'GLOB')
     {
         no strict 'refs';
+        $tied = tied *$value;
         $size = scalar grep *$value{$_}, @glob_slots;
-        $key = $value = "*".*$value{PACKAGE}."::".*$value{NAME};
-        $reftype = undef;
+        $value = "*".*$value{PACKAGE}."::".*$value{NAME};
+        $layers = _get_layers($key);
         $expandable = $size ? \1 : \0;
     }
 
@@ -622,9 +631,7 @@ sub _get_reference_descriptor
 
     # handling encoding
 
-
-
-    return +{
+    my $result = {
         name       => _to_utf8( "$name" ),
         value      => _to_utf8( "$value" ),
         type       => "$type",
@@ -635,6 +642,30 @@ sub _get_reference_descriptor
         ref_depth  => $ref_depth,
         is_utf     => $is_utf
     };
+
+    $result->{layers} = $layers if $layers;
+    $result->{tied_with} = _get_reference_descriptor(object => $tied) if $tied;
+
+    return $result;
+}
+
+sub _get_layers{
+    my $glob = shift;
+
+    my %result = ();
+    my $input_layers = _pack_layers(PerlIO::get_layers($glob, details => 1));
+    $result{input} = $input_layers if $input_layers && @$input_layers;
+
+    my $output_layers = _pack_layers(PerlIO::get_layers($glob, details => 1, output=>1));
+    $result{output} = $output_layers if $output_layers && @$output_layers;
+
+    return scalar keys %result ? \%result: undef;
+}
+
+sub _pack_layers{
+    my @result = ();
+    push @result, { name => shift, param => shift, flags => shift} while @_;
+    return \@result;
 }
 
 #
