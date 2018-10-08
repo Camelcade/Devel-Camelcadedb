@@ -1,6 +1,6 @@
 package Devel::Camelcadedb;
 # must be quoted to work correctly with JSON protocol
-our $VERSION = "v2017.100.3"; # DO NOT REMOVE FUCKING v, IT KEEPS PROPER VERSIONING
+our $VERSION = "v2018.3.0"; # DO NOT REMOVE FUCKING v, IT KEEPS PROPER VERSIONING
 
 # http://perldoc.perl.org/DB.html
 # http://perldoc.perl.org/perldebug.html
@@ -555,6 +555,7 @@ sub _get_reference_descriptor
     my $ref_depth = 0;
     my $is_utf = \0;
     my $layers = undef;
+    my $fileno = undef;
 
     my $tied;
 
@@ -602,6 +603,7 @@ sub _get_reference_descriptor
         $size = scalar grep *$value{$_}, @glob_slots;
         $value = "*".*$value{PACKAGE}."::".*$value{NAME};
         $layers = _get_layers($key);
+        $fileno = fileno($key);
         $expandable = $size ? \1 : \0;
     }
 
@@ -644,6 +646,7 @@ sub _get_reference_descriptor
     };
 
     $result->{layers} = $layers if $layers;
+    $result->{fileno} = "".$fileno if defined $fileno;
     $result->{tied_with} = _get_reference_descriptor(object => $tied) if $tied;
 
     return $result;
