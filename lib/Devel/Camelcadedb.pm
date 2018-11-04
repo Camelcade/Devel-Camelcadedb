@@ -1094,7 +1094,7 @@ sub _get_loaded_breakpoints_by_real_path
 
 sub _get_current_breakpoint
 {
-    return if $DB::single || $DB::signal;
+    # return if $DB::single || $DB::signal;
     my $current_breakpoint = $DB::dbline{$current_line};
     return unless $current_breakpoint;
     if ($current_breakpoint->{run_to_cursor})
