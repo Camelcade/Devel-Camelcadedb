@@ -1,5 +1,8 @@
 Revision history for Devel-Camelcadedb
 
+2019.1
+        Added renderers support
+
 2018.3.0
         Introduced fileno information
 

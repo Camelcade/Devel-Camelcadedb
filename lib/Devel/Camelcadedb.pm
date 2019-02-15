@@ -1,6 +1,6 @@
 package Devel::Camelcadedb;
 # must be quoted to work correctly with JSON protocol
-our $VERSION = "v2018.3.0"; # DO NOT REMOVE FUCKING v, IT KEEPS PROPER VERSIONING
+our $VERSION = "v2019.1"; # DO NOT REMOVE FUCKING v, IT KEEPS PROPER VERSIONING
 
 # http://perldoc.perl.org/DB.html
 # http://perldoc.perl.org/perldebug.html
@@ -111,6 +111,11 @@ our @args = ();       # arguments of current subroutine or @ARGV array
 
 our @ret = ();        # return value of last sub executed in list context
 our $ret = '';        # return value of last sub executed in scalar context
+
+# custom values renderers. Consists of two items arrayrefs, with class as a first field, and code text as second field
+# every blessed item is checked with this list and if it matches with some renderer - it is used as value in ide.
+# e.g. ['Foo::Bar', '$it->as_string`] meaning that any 'Foo::Bar' object will be represented with as_string value
+my @renderers = ();
 
 my %_perl_file_id_to_path_map = ();  # map of perl file ids without _<  => real path detected on loading
 my %_paths_to_perl_file_id_map = (); # maps real paths to _<filename
@@ -556,7 +561,8 @@ sub _get_reference_descriptor
     my $is_utf = \0;
     my $layers = undef;
     my $fileno = undef;
-
+    my $rendered = undef;
+    my $rendered_error = \0;
     my $tied;
 
     if (!$reftype)
@@ -619,6 +625,28 @@ sub _get_reference_descriptor
         $_references_cache{$stringified_key} = $key;
     }
 
+    if ($ref) {
+        my $got_renderer = 0;
+        for my $renderer (@renderers) {
+            if (UNIVERSAL::isa($key, $renderer->[0])) {
+                $got_renderer = 1;
+                $DB::Sandbox::it = $key;
+                $rendered = eval 'package DB::Sandbox;our $it;' . $renderer->[1];
+                if ($@) {
+                    $rendered = $@;
+                    $rendered_error = \1;
+                }
+                last;
+            }
+        }
+        unless ($got_renderer) {
+            $rendered = "$key";
+            if ($rendered eq $type) {
+                $rendered = undef;
+            }
+        }
+    }
+
     $name = "$name";
     $value = "$value";
 
@@ -627,15 +655,15 @@ sub _get_reference_descriptor
         $char_code < 32 ? '^'.chr( $char_code + 0x40 ) : $1
         }gsex;
     $value =~ s{([^\n\r\f\t])}{
-        $char_code = ord( $1 );
-        $char_code < 32 ? '^'.chr( $char_code + 0x40 ) : $1
+            $char_code = ord($1);
+        $char_code < 32 ? '^' . chr($char_code + 0x40) : $1
         }gsex;
 
     # handling encoding
 
     my $result = {
-        name       => _to_utf8( "$name" ),
-        value      => _to_utf8( "$value" ),
+        name       => _to_utf8("$name"),
+        value      => _to_utf8("$value"),
         type       => "$type",
         expandable => $expandable,
         key        => $stringified_key,
@@ -645,6 +673,15 @@ sub _get_reference_descriptor
         is_utf     => $is_utf
     };
 
+    if (defined $rendered) {
+        $rendered =~ s{([^\n\r\f\t])}{
+                $char_code = ord($1);
+            $char_code < 32 ? '^' . chr($char_code + 0x40) : $1
+            }gsex;
+
+        $result->{rendered} = _to_utf8($rendered);
+        $result->{rendered_error} = $rendered_error;
+    }
     $result->{layers} = $layers if $layers;
     $result->{fileno} = "".$fileno if defined $fileno;
     $result->{tied_with} = _get_reference_descriptor(object => $tied) if $tied;
@@ -1204,6 +1241,19 @@ sub _set_up_debugger
 
     $_enable_compile_time_breakpoints = 1 if $set_up_data->{enableCompileTimeBreakpoints};
     $_enable_noninteractive_mode = 1 if $set_up_data->{enableNonInteractiveMode};
+
+    if (ref $set_up_data->{renderers} eq 'ARRAY') {
+        for my $entry (@{$set_up_data->{renderers}}) {
+            if (ref $entry ne 'HASH') {
+                next;
+            }
+            my ($package, $code) = @$entry{qw/packageName renderExpression/};
+            if (!$package || !$code) {
+                next;
+            }
+            push @renderers, [ $package, $code ];
+        }
+    }
 
     my $start_mode = $set_up_data->{startMode};
 
