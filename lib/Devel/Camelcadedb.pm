@@ -928,8 +928,6 @@ sub _get_next_command
         unless (defined $read_bytes)
         {
             die 'Debugging socket disconnected';
-            print STDERR "$!\n";
-            exit -1;
         }
         unless ($new_line_index > -1)
         {
