@@ -1828,12 +1828,11 @@ sub _connect
     my $_perl5_debug_host = $ENV{PERL5_DEBUG_HOST};
     my $_perl5_debug_port = $ENV{PERL5_DEBUG_PORT};
 
-    # setting the environment variable 'CAMELCADEDB_TAINT_MODE_SUPPORT' to a
-    # truthy value causes this to untaint the host/port variables, allowing
-    # the debugger to be run on Perl programs that have taint mode enabled.
-    if ($ENV{CAMELCADEDB_TAINT_MODE_SUPPORT})
+    # ${^TAINT} will be truthy if taint mode is on.
+    if (${^TAINT})
     {
-        # untaint the host and port variables
+        # The debugger will fail with "Insecure dependency in connect..."
+        # if we do not untaint the host and port variables, so we do so here.
         ($_perl5_debug_host) = $_perl5_debug_host =~ /(.*)/;
         ($_perl5_debug_port) = $_perl5_debug_port =~ /(.*)/;
     }
