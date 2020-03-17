@@ -1825,36 +1825,49 @@ sub is_connected
 
 sub _connect
 {
+    my $_perl5_debug_host = $ENV{PERL5_DEBUG_HOST};
+    my $_perl5_debug_port = $ENV{PERL5_DEBUG_PORT};
+
+    # setting the environment variable 'CAMELCADEDB_TAINT_MODE_SUPPORT' to a
+    # truthy value causes this to untaint the host/port variables, allowing
+    # the debugger to be run on Perl programs that have taint mode enabled.
+    if ($ENV{CAMELCADEDB_TAINT_MODE_SUPPORT})
+    {
+        # untaint the host and port variables
+        ($_perl5_debug_host) = $_perl5_debug_host =~ /(.*)/;
+        ($_perl5_debug_port) = $_perl5_debug_port =~ /(.*)/;
+    }
+
     my ($attempts, $allow_fail) = @_;
     # http://perldoc.perl.org/perlipc.html#Sockets%3a-Client%2fServer-Communication
     if ($ENV{PERL5_DEBUG_ROLE} eq 'server')
     {
-        printf STDERR "Listening for the IDE connection at %s:%s...\n", $ENV{PERL5_DEBUG_HOST}, $ENV{PERL5_DEBUG_PORT};
+        printf STDERR "Listening for the IDE connection at %s:%s...\n", $_perl5_debug_host, $_perl5_debug_port;
         my $_server_socket = IO::Socket::INET->new(
             Listen    => 1,
-            LocalAddr => $ENV{PERL5_DEBUG_HOST},
-            LocalPort => $ENV{PERL5_DEBUG_PORT},
+            LocalAddr => $_perl5_debug_host,
+            LocalPort => $_perl5_debug_port,
             ReuseAddr => 1,
             Proto     => 'tcp',
-        ) || die "Error binding to $ENV{PERL5_DEBUG_HOST}:$ENV{PERL5_DEBUG_PORT}";
+        ) || die "Error binding to ${_perl5_debug_host}:${_perl5_debug_port}";
         $_debug_packed_address = accept( $_debug_socket, $_server_socket );
     }
     else
     {
         foreach my $attempt (1 .. $attempts)
         {
-            printf STDERR "($attempt)Connecting to the IDE from process %s at %s:%s...\n", $$, $ENV{PERL5_DEBUG_HOST},
-                $ENV{PERL5_DEBUG_PORT};
+            printf STDERR "($attempt)Connecting to the IDE from process %s at %s:%s...\n", $$, ${_perl5_debug_host},
+                ${_perl5_debug_port};
             $_debug_socket = IO::Socket::INET->new(
-                PeerAddr  => $ENV{PERL5_DEBUG_HOST},
-                PeerPort  => $ENV{PERL5_DEBUG_PORT},
+                PeerAddr  => $_perl5_debug_host,
+                PeerPort  => $_perl5_debug_port,
                 ReuseAddr => 1,
                 Proto     => 'tcp',
             );
             last if $_debug_socket || $attempt == $attempts;
             sleep( 1 ); # this is kinda hacky
         }
-        die "Error connecting to $ENV{PERL5_DEBUG_HOST}:$ENV{PERL5_DEBUG_PORT}" if !$_debug_socket && !$allow_fail;
+        die "Error connecting to ${_perl5_debug_host}:${_perl5_debug_port}" if !$_debug_socket && !$allow_fail;
     }
     _set_up_after_connect( $allow_fail ) if $_debug_socket;
 }
