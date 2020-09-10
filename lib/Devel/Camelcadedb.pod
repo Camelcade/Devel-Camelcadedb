@@ -53,7 +53,7 @@ Disconnects from the IDE.
     DB::disable();
 
 Disables the most expensive debugger hooks, so execution speed is not
-affacted; the debugger is not functional while disabled, but it can be
+affected; the debugger is not functional while disabled, but it can be
 re-enabled at any time.
 
 =head2 enable
