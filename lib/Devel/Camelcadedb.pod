@@ -60,7 +60,7 @@ re-enabled at any time.
 
     DB::enable();
 
-Re-enables debugging after a C<diable> call.
+Re-enables debugging after a C<disable> call.
 
 =head1 AUTHORS
 
