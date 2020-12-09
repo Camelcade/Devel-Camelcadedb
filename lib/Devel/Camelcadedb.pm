@@ -968,6 +968,7 @@ sub _get_next_command
         }
         unless ($new_line_index > -1)
         {
+            ( $@, $!, $^E, $,, $/, $\, $^W ) = @saved;
             print STDERR "Buffer $input_buffer has no newlines in it and nothing is in the socket\n";
             exit -1;
         }
