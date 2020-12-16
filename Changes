@@ -1,5 +1,11 @@
 Revision history for Devel-Camelcadedb
 
+2020.3
+        Taint mode support, by @djstauffer
+        Typo fixes, by @HenkPoley
+        Proper state restoration on exit (mod_perl2 consistency fix), by @jonas-lindmark
+        Introduced $API_VERSION variable to unbind debugger version from protocol version
+
 2019.1
         Added renderers support
 

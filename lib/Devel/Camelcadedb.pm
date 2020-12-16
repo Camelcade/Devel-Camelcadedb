@@ -1,6 +1,10 @@
 package Devel::Camelcadedb;
 # must be quoted to work correctly with JSON protocol
-our $VERSION = "v2019.1"; # DO NOT REMOVE FUCKING v, IT KEEPS PROPER VERSIONING
+our $VERSION = "v2020.3"; # DO NOT REMOVE FUCKING v, IT KEEPS PROPER VERSIONING
+
+# to ensure protocol compatibility between the IDE and the debugger, we will use $API_VERSION variable, to be able
+# to bump debugger version without necessity to update IDE part.
+my $API_VERSION = "2019.1";
 
 # http://perldoc.perl.org/DB.html
 # http://perldoc.perl.org/perldebug.html
@@ -1292,7 +1296,7 @@ sub _set_up_after_connect
 
     _send_data_to_debugger( +{
         event   => 'READY',
-        version => $VERSION,
+        version => $API_VERSION,
     } );
     _report "Waiting for set up data..." if $_dev_mode;
     my $set_up_data = <$_debug_socket>;
