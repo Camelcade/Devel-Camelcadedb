@@ -968,6 +968,10 @@ sub _get_next_command
         }
         unless ($new_line_index > -1)
         {
+            if (scalar @saved) {
+                ($@, $!, $^E, $,, $/, $\, $^W) = @saved;
+                @saved = ();
+            }
             print STDERR "Buffer $input_buffer has no newlines in it and nothing is in the socket\n";
             exit -1;
         }
@@ -1485,7 +1489,8 @@ EOM
 
         if ($condition && !_eval_expression( $condition )->{result})
         {
-            ( $@, $!, $^E, $,, $/, $\, $^W ) = @saved;
+            ($@, $!, $^E, $,, $/, $\, $^W) = @saved;
+            @saved = ();
             $_internal_process = 0;
             return;
         }
@@ -1498,7 +1503,8 @@ EOM
         if (!$breakpoint->{suspend})
         {
             _send_breakpoint_reached_event( $breakpoint );
-            ( $@, $!, $^E, $,, $/, $\, $^W ) = @saved;
+            ($@, $!, $^E, $,, $/, $\, $^W) = @saved;
+            @saved = ();
             $_internal_process = 0;
             return;
         }
@@ -1537,7 +1543,8 @@ EOM
     _event_handler( $breakpoint ) unless $skip_event_handler;
 
     $_internal_process = 0;
-    ( $@, $!, $^E, $,, $/, $\, $^W ) = @saved;
+    ($@, $!, $^E, $,, $/, $\, $^W) = @saved;
+    @saved = ();
     ();
 }
 
