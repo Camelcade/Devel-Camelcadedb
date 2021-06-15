@@ -1,6 +1,6 @@
 package Devel::Camelcadedb;
 # must be quoted to work correctly with JSON protocol
-our $VERSION = "v2020.3"; # DO NOT REMOVE FUCKING v, IT KEEPS PROPER VERSIONING
+our $VERSION = "v2021.1"; # DO NOT REMOVE FUCKING v, IT KEEPS PROPER VERSIONING
 
 # to ensure protocol compatibility between the IDE and the debugger, we will use $API_VERSION variable, to be able
 # to bump debugger version without necessity to update IDE part.
@@ -550,7 +550,7 @@ sub _from_utf8
 
 sub _get_reference_descriptor
 {
-    my ($name, $value) = @_;
+    my ($name, $value, $uniq_map) = @_;
 
     my $key = $value;
     my $reftype = Scalar::Util::reftype( $value );
@@ -567,6 +567,7 @@ sub _get_reference_descriptor
     my $fileno = undef;
     my $rendered = undef;
     my $rendered_error = \0;
+    my $error = undef;
     my $tied;
 
     if (!$reftype)
@@ -585,9 +586,18 @@ sub _get_reference_descriptor
     }
     elsif ($reftype eq 'REF')
     {
-        my $result = _get_reference_descriptor( $name, $$value );
-        $result->{ref_depth}++;
-        return $result;
+        $uniq_map //= {};
+        if( exists $uniq_map->{$type} ){
+            $value = "Cyclic reference to $type";
+            $error = 1;
+        }
+        else{
+            $uniq_map->{$type} = 1;
+            my $result = _get_reference_descriptor( $name, $$value, $uniq_map );
+            $result->{ref_depth}++;
+            return $result;
+        }
+
     }
     elsif ($reftype eq 'ARRAY')
     {
@@ -688,7 +698,18 @@ sub _get_reference_descriptor
     }
     $result->{layers} = $layers if $layers;
     $result->{fileno} = "".$fileno if defined $fileno;
-    $result->{tied_with} = _get_reference_descriptor(object => $tied) if $tied;
+    if( $tied){
+        $uniq_map //= {};
+        if( exists $uniq_map->{$type} ){
+            $result->{tied_with} = "Cyclic reference to $type";
+            $result->{error} = \1;
+        }
+        else {
+            $uniq_map->{$type} = 1;
+            $result->{tied_with} = _get_reference_descriptor(object => $tied, $uniq_map);
+        }
+    }
+    $result->{error} = \1 if $error;
 
     return $result;
 }

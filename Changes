@@ -1,5 +1,8 @@
 Revision history for Devel-Camelcadedb
 
+2021.1
+        Fixed crash on cyclic references rendering, #38 #56
+
 2020.3
         Taint mode support, by @djstauffer
         Typo fixes, by @HenkPoley
