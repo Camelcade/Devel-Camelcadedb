@@ -1,8 +1,6 @@
 # Devel::Camelcadedb
 
-This module is a perl side of [Camelcade](https://github.com/hurricup/Perl5-IDEA) debugger.
-
-This project is currently in development and not yet working.
+This module is a perl side of [Camelcade](https://github.com/Camelcade/Perl5-IDEA) debugger.
 
 # INSTALLATION
 
@@ -22,7 +20,6 @@ perldoc command.
 
 You can also look for information at:
 
-* [AnnoCPAN, Annotated CPAN documentation](http://annocpan.org/dist/Devel-Camelcadedb)
+* [MetaCpan](https://metacpan.org/pod/Devel::Camelcadedb/)
 * [CPAN Ratings](http://cpanratings.perl.org/d/Devel-Camelcadedb)
-* [Search CPAN](http://search.cpan.org/dist/Devel-Camelcadedb/)
 
