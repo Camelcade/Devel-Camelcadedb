@@ -550,7 +550,7 @@ sub _from_utf8
 
 sub _get_reference_descriptor
 {
-    my ($name, $value, $uniq_map) = @_;
+    my ($name, $value) = @_;
 
     my $key = $value;
     my $reftype = Scalar::Util::reftype( $value );
@@ -567,7 +567,6 @@ sub _get_reference_descriptor
     my $fileno = undef;
     my $rendered = undef;
     my $rendered_error = \0;
-    my $error = undef;
     my $tied;
 
     if (!$reftype)
@@ -586,18 +585,20 @@ sub _get_reference_descriptor
     }
     elsif ($reftype eq 'REF')
     {
-        $uniq_map //= {};
-        if( exists $uniq_map->{$type} ){
-            $value = "Cyclic reference to $type";
-            $error = 1;
+        my $target_reftype = Scalar::Util::reftype($$value);
+        $tied = tied $value;
+
+        if ($target_reftype eq 'REF' || $tied) {
+            # deep reference or tied reference, using expanding
+            $size = 1;
+            $expandable = \1;
+            $value = "Reference";
         }
-        else{
-            $uniq_map->{$type} = 1;
-            my $result = _get_reference_descriptor( $name, $$value, $uniq_map );
+        else {
+            my $result = _get_reference_descriptor($name, $$value);
             $result->{ref_depth}++;
             return $result;
         }
-
     }
     elsif ($reftype eq 'ARRAY')
     {
@@ -698,18 +699,7 @@ sub _get_reference_descriptor
     }
     $result->{layers} = $layers if $layers;
     $result->{fileno} = "".$fileno if defined $fileno;
-    if( $tied){
-        $uniq_map //= {};
-        if( exists $uniq_map->{$type} ){
-            $result->{tied_with} = "Cyclic reference to $type";
-            $result->{error} = \1;
-        }
-        else {
-            $uniq_map->{$type} = 1;
-            $result->{tied_with} = _get_reference_descriptor(object => $tied, $uniq_map);
-        }
-    }
-    $result->{error} = \1 if $error;
+    $result->{tied_with} = _get_reference_descriptor(object => $tied) if $tied;
 
     return $result;
 }
