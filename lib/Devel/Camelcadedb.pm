@@ -460,7 +460,7 @@ sub _get_reference_subelements
         }
         elsif ($reftype eq 'REF')
         {
-            push @$data, _get_reference_descriptor( $source_data, \$$source_data );
+            push @$data, _get_reference_descriptor($source_data, $$source_data);
         }
         elsif ($reftype eq 'GLOB')
         {
@@ -583,22 +583,13 @@ sub _get_reference_descriptor
         $is_utf = defined $$value && utf8::is_utf8( $$value ) ? \1 : \0;
         $value = defined $$value ? "\"$$value\"" : 'undef'; #_escape_scalar(
     }
-    elsif ($reftype eq 'REF')
-    {
-        my $target_reftype = Scalar::Util::reftype($$value);
+    elsif ($reftype eq 'REF') {
+        $type = overload::StrVal($$value) || 'unknown';
         $tied = tied $value;
-
-        if ($target_reftype eq 'REF' || $tied) {
-            # deep reference or tied reference, using expanding
-            $size = 1;
-            $expandable = \1;
-            $value = "Reference";
-        }
-        else {
-            my $result = _get_reference_descriptor($name, $$value);
-            $result->{ref_depth}++;
-            return $result;
-        }
+        $size = 1;
+        $expandable = \1;
+        $ref_depth = 1;
+        $ref = undef; # to prevent rendering data
     }
     elsif ($reftype eq 'ARRAY')
     {
