@@ -1,5 +1,11 @@
 Revision history for Devel-Camelcadedb
 
+2021.2
+        Re-worked references handling with a debugger, #56 #57 #38
+        - no more references squashing
+        - proper references introspect
+        New bug discovered, still need to be addressed: #58
+
 2021.1
         Fixed crash on cyclic references rendering, #38 #56
 

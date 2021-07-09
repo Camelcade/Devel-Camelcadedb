@@ -1,6 +1,6 @@
 package Devel::Camelcadedb;
 # must be quoted to work correctly with JSON protocol
-our $VERSION = "v2021.1"; # DO NOT REMOVE FUCKING v, IT KEEPS PROPER VERSIONING
+our $VERSION = "v2021.2"; # DO NOT REMOVE FUCKING v, IT KEEPS PROPER VERSIONING
 
 # to ensure protocol compatibility between the IDE and the debugger, we will use $API_VERSION variable, to be able
 # to bump debugger version without necessity to update IDE part.
