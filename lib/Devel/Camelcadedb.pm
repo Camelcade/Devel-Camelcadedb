@@ -136,7 +136,7 @@ my %_templates_to_evals_map = ();        # map of templates to evals or somethin
 my @glob_slots = qw/SCALAR ARRAY HASH CODE IO FORMAT/;
 my $glob_slots = join '|', @glob_slots;
 
-my $_dev_mode = 0;                              # enable this to get verbose STDERR output from process
+my $_dev_mode = $ENV{CAMELCADEDB_DEV_MODE};     # enable this to get verbose STDERR output from process
 my $_debug_log_fh = *STDERR;                    # debug log fh. If omited, file will be created
 my $_debug_log_filename = 'current_debug.log';
 my $_debug_sub_handler = 1;                     # debug entering/leaving subs, works in dev mode

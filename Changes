@@ -1,5 +1,8 @@
 Revision history for Devel-Camelcadedb
 
+2023.1
+        Introduced `CAMELCADEDB_DEV_MODE` environment variable to enable dev mode with verbose output, #61
+
 2021.2
         Re-worked references handling with a debugger, #56 #57 #38
         - no more references squashing
