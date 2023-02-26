@@ -1,15 +1,14 @@
 # Devel::Camelcadedb
 
+[![Testing](https://github.com/Camelcade/Devel-Camelcadedb/actions/workflows/main.yml/badge.svg)](https://github.com/Camelcade/Devel-Camelcadedb/actions/workflows/main.yml)
+
 This module is a perl side of [Camelcade](https://github.com/Camelcade/Perl5-IDEA) debugger.
 
 # INSTALLATION
 
-To install this module, run the following commands:
+You may install module with [cpanminus](https://github.com/miyagawa/cpanminus) with `cpanm install Devel::Camelcadedb`
 
-	perl Makefile.PL
-	make
-	make test
-	make install
+You may install module from sources with [Dist::Zilla](https://github.com/rjbs/Dist-Zilla) with `dzil install`
 
 # SUPPORT AND DOCUMENTATION
 
