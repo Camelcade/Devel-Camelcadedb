@@ -1341,10 +1341,8 @@ sub _process_breakpoints_descriptors
 sub _set_break_points_for_files
 {
     return unless $ready_to_go;
-    my ($paths_array) = @_;
 
-    $paths_array = [ keys %_queued_breakpoints_files ] unless $paths_array;
-    $paths_array = [ $paths_array ] unless ref $paths_array;
+    my $paths_array = [ keys %_queued_breakpoints_files ];
     return unless @{$paths_array};
 
     my $default_context = undef;
