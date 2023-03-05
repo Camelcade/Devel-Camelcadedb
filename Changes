@@ -1,6 +1,7 @@
 Revision history for Devel-Camelcadedb
 
 2023.1
+        Fixed spammy `BREAKPOINT_SET` events sent to the IDE, 61
         Introduced `CAMELCADEDB_DEV_MODE` environment variable to enable dev mode with verbose output, #61
 
 2021.2

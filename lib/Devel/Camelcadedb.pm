@@ -1204,8 +1204,6 @@ sub _reset_breakpoint
     {
         $perl_breakpoints_map->{$real_line} = 0;
     }
-
-    return 1;
 }
 
 sub _set_run_to_cursor_breakpoint
@@ -1228,16 +1226,14 @@ sub _set_breakpoint
     _report 'Setting breakpoint to %s, real line %s, %s', $breakpoint_descriptor->{path}, $real_line,
         $perl_source_lines->[$real_line] if $_dev_mode && $_debug_breakpoints;
 
-    if (!defined $perl_source_lines->[$real_line] || $perl_source_lines->[$real_line] == 0)
-    {
-        _send_event( "BREAKPOINT_DENIED", $event_data );
-        return 1;
+    $breakpoint_descriptor->{_processed} = 1;
+
+    if (!defined $perl_source_lines->[$real_line] || $perl_source_lines->[$real_line] == 0) {
+        _send_event("BREAKPOINT_DENIED", $event_data);
     }
-    else
-    {
+    else {
         $perl_breakpoints_map->{$real_line} = $breakpoint_descriptor;
-        _send_event( "BREAKPOINT_SET", $event_data ) unless $breakpoint_descriptor->{run_to_cursor};
-        return 1;
+        _send_event("BREAKPOINT_SET", $event_data) unless $breakpoint_descriptor->{run_to_cursor};
     }
 }
 
@@ -1369,26 +1365,33 @@ sub _set_break_points_for_files
         my $old_context = _switch_context( $perl_file_id );
         $default_context //= $old_context;
 
-        #    print STDERR "Attempting to set breakpoints for $real_path\n";
         my @lines = keys %{$loaded_breakpoints_descriptors};
         my $breakpoints_left = scalar @lines;
 
-        foreach my $real_line (@lines)
-        {
+        foreach my $real_line (@lines) {
             my $breakpoint_descriptor = $loaded_breakpoints_descriptors->{$real_line};
+
+            if (exists $breakpoint_descriptor->{_processed}) {
+                $breakpoints_left--;
+                _report "Breakpoint is already set: %s, %s, %s",
+                    @{$breakpoint_descriptor}{qw/path line remove/} if $_dev_mode;
+                next;
+            }
+
+            if ($real_line > $#$perl_source_lines) {
+                _report "Skip breakpoint setting, file seems not completely compiled. Breakpoint: %s, %s, %s, script lines: %s",
+                    @{$breakpoint_descriptor}{qw/path line remove/}, $#$perl_source_lines if $_dev_mode;
+                next;
+            }
             _report "Processing descriptor %s, %s, %s", @{$breakpoint_descriptor}{qw/path line remove/} if $_dev_mode;
 
-            next if $real_line > $#$perl_source_lines; # compiled incompletely
-
-            if ($breakpoint_descriptor->{remove})
-            {
-                $breakpoints_left -= _reset_breakpoint( $breakpoint_descriptor, $real_line, $perl_breakpoints_map );
+            if ($breakpoint_descriptor->{remove}) {
+                _reset_breakpoint($breakpoint_descriptor, $real_line, $perl_breakpoints_map);
             }
-            else
-            {
-                $breakpoints_left -= _set_breakpoint( $breakpoint_descriptor, $real_line, $perl_breakpoints_map,
-                    $perl_source_lines );
+            else {
+                _set_breakpoint($breakpoint_descriptor, $real_line, $perl_breakpoints_map, $perl_source_lines);
             }
+            $breakpoints_left--;
         }
 
         delete $_queued_breakpoints_files{$real_path} unless $breakpoints_left;
