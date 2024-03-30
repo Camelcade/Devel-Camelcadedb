@@ -398,83 +398,68 @@ sub _get_file_source_handler
     );
 }
 
-sub _get_reference_subelements
-{
-    my ($request_serialized_object) = @_;
-    my $transaction_wrapper = _deserialize( $request_serialized_object );
-    my ($transaction_id, $request_object) = @$transaction_wrapper{qw/id data/};
+sub _compute_reference_subelements {
+    my $request_object = shift;
+
     my ($offset, $size, $key) = @$request_object{qw/offset limit key/};
-    my $data = [ ];
+    my $data = [];
 
     my $source_data;
 
     if ($key =~ /^\*(.+?)(?:\{($glob_slots)\})?$/) # hack for globs by names
     {
         no strict 'refs';
-        my ( $name, $slot) = ($1, $2);
+        my ($name, $slot) = ($1, $2);
 
-        if ($slot)
-        {
+        if ($slot) {
             $source_data = *{$name}{$slot};
         }
-        else
-        {
+        else {
             $source_data = \*{$name};
         }
 
         _report "Got glob ref $key => $source_data" if $_dev_mode;
     }
-    else
-    {
+    else {
         $source_data = $_references_cache{$key};
     }
-    if ($source_data)
-    {
-        my $reftype = Scalar::Util::reftype( $source_data );
+    if ($source_data) {
+        my $reftype = Scalar::Util::reftype($source_data);
 
-        if ($reftype eq 'ARRAY' && $#$source_data >= $offset)
-        {
+        if ($reftype eq 'ARRAY' && $#$source_data >= $offset) {
             my $last_index = $offset + $size;
 
-            for (my $item_number = $offset; $item_number < $last_index && $item_number < @$source_data; $item_number++)
-            {
-                push @$data, _get_reference_descriptor( "[$item_number]", \$source_data->[$item_number] );
+            for (my $item_number = $offset; $item_number < $last_index && $item_number < @$source_data; $item_number++) {
+                push @$data, _get_reference_descriptor("[$item_number]", \$source_data->[$item_number]);
             }
         }
-        elsif ($reftype eq 'HASH')
-        {
-            my $hash_iterator = Hash::StoredIterator::hash_get_iterator( $source_data );
+        elsif ($reftype eq 'HASH') {
+            my $hash_iterator = Hash::StoredIterator::hash_get_iterator($source_data);
             my @keys = sort keys %$source_data;
-            Hash::StoredIterator::hash_set_iterator( $source_data, $hash_iterator );
+            Hash::StoredIterator::hash_set_iterator($source_data, $hash_iterator);
 
-            if ($#keys >= $offset)
-            {
+            if ($#keys >= $offset) {
                 my $last_index = $offset + $size;
 
-                for (my $item_number = $offset; $item_number < $last_index && $item_number < @keys; $item_number++)
-                {
+                for (my $item_number = $offset; $item_number < $last_index && $item_number < @keys; $item_number++) {
                     my $hash_key = $keys[$item_number];
-                    push @$data, _get_reference_descriptor( "'$hash_key'", \$source_data->{$hash_key} );
+                    push @$data, _get_reference_descriptor("'$hash_key'", \$source_data->{$hash_key});
                 }
             }
         }
-        elsif ($reftype eq 'REF')
-        {
+        elsif ($reftype eq 'REF') {
             push @$data, _get_reference_descriptor($source_data, $$source_data);
         }
-        elsif ($reftype eq 'GLOB')
-        {
+        elsif ($reftype eq 'GLOB') {
             no strict 'refs';
 
-            foreach my $glob_slot (@glob_slots)
-            {
+            foreach my $glob_slot (@glob_slots) {
                 my $reference = *$source_data{$glob_slot};
                 next unless $reference;
-                my $desciptor = _get_reference_descriptor( $glob_slot, \$reference );
+                my $desciptor = _get_reference_descriptor($glob_slot, \$reference);
 
                 # hack for DB namespace, see https://github.com/hurricup/Perl5-IDEA/issues/1151
-                if ($glob_slot eq 'HASH' && $key =~ /^\*(::)*(main::)*(::)*DB(::)?$/)
-                {
+                if ($glob_slot eq 'HASH' && $key =~ /^\*(::)*(main::)*(::)*DB(::)?$/) {
                     $desciptor->{expandable} = \0;
                     $desciptor->{size} = 0;
                 }
@@ -483,18 +468,23 @@ sub _get_reference_subelements
             }
 
         }
-        else
-        {
+        else {
             _report "Dont know how to iterate $reftype" if $_dev_mode;
         }
 
     }
-    else
-    {
+    else {
         _report "No source data for $key\n" if $_dev_mode;
     }
+    return $data;
+}
 
-    _send_transaction_response( $transaction_id, $data );
+sub _get_reference_subelements
+{
+    my ($request_serialized_object) = @_;
+    my $transaction_wrapper = _deserialize( $request_serialized_object );
+    my ($transaction_id, $request_object) = @$transaction_wrapper{qw/id data/};
+    _send_transaction_response($transaction_id, _compute_reference_subelements($request_object));
 }
 
 sub _format_variables_hash

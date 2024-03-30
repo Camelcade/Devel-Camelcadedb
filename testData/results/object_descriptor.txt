@@ -1,0 +1,127 @@
+Object: 
+$VAR1 = bless( {
+                 'foo' => 42
+               }, 'Foo::Bar' );
+
+
+Descriptor: 
+$VAR1 = {
+          'blessed' => \1,
+          'expandable' => \1,
+          'is_utf' => \0,
+          'key' => 'Foo::Bar=HASH(...)',
+          'name' => 'something',
+          'ref_depth' => 0,
+          'size' => 1,
+          'type' => 'Foo::Bar=HASH(...)',
+          'value' => 'size = 1'
+        };
+
+
+My variables descriptor: 
+$VAR1 = [
+          {
+            'blessed' => \0,
+            'expandable' => \0,
+            'is_utf' => \0,
+            'key' => 'SCALAR(...)',
+            'name' => '$OVERWRITE_RESULTS',
+            'ref_depth' => 0,
+            'size' => 0,
+            'type' => 'SCALAR(...)',
+            'value' => '"0"'
+          },
+          {
+            'blessed' => \0,
+            'expandable' => \1,
+            'is_utf' => \0,
+            'key' => 'REF(...)',
+            'name' => '$array_ref',
+            'ref_depth' => 1,
+            'size' => 1,
+            'type' => 'ARRAY(...)',
+            'value' => 'REF(...)'
+          },
+          {
+            'blessed' => \0,
+            'expandable' => \1,
+            'is_utf' => \0,
+            'key' => 'REF(...)',
+            'name' => '$hash_ref',
+            'ref_depth' => 1,
+            'size' => 1,
+            'type' => 'HASH(...)',
+            'value' => 'REF(...)'
+          },
+          {
+            'blessed' => \0,
+            'expandable' => \0,
+            'is_utf' => \0,
+            'key' => 'SCALAR(...)',
+            'name' => '$scalar',
+            'ref_depth' => 0,
+            'size' => 0,
+            'type' => 'SCALAR(...)',
+            'value' => '"42"'
+          },
+          {
+            'blessed' => \0,
+            'expandable' => \1,
+            'is_utf' => \0,
+            'key' => 'REF(...)',
+            'name' => '$scalar_ref',
+            'ref_depth' => 1,
+            'size' => 1,
+            'type' => 'SCALAR(...)',
+            'value' => 'REF(...)'
+          },
+          {
+            'blessed' => \0,
+            'expandable' => \1,
+            'is_utf' => \0,
+            'key' => 'REF(...)',
+            'name' => '$something',
+            'ref_depth' => 1,
+            'size' => 1,
+            'type' => 'Foo::Bar=HASH(...)',
+            'value' => 'REF(...)'
+          },
+          {
+            'blessed' => \0,
+            'expandable' => \1,
+            'is_utf' => \0,
+            'key' => 'HASH(...)',
+            'name' => '%hash',
+            'ref_depth' => 0,
+            'size' => 1,
+            'type' => 'HASH(...)',
+            'value' => 'size = 1'
+          },
+          {
+            'blessed' => \0,
+            'expandable' => \1,
+            'is_utf' => \0,
+            'key' => 'ARRAY(...)',
+            'name' => '@array',
+            'ref_depth' => 0,
+            'size' => 1,
+            'type' => 'ARRAY(...)',
+            'value' => 'size = 1'
+          }
+        ];
+
+
+Subelements:
+$VAR1 = [
+          {
+            'blessed' => \0,
+            'expandable' => \0,
+            'is_utf' => \0,
+            'key' => 'SCALAR(...)',
+            'name' => '\'foo\'',
+            'ref_depth' => 0,
+            'size' => 0,
+            'type' => 'SCALAR(...)',
+            'value' => '"42"'
+          }
+        ];
