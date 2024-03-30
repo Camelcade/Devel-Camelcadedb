@@ -6,3 +6,4 @@
 /Devel-Camelcadedb*
 *.iml
 /.idea/
+!/.idea/vcs.xml
