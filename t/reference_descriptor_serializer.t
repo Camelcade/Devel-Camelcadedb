@@ -88,4 +88,54 @@ subtest "Object Descriptor" => sub {
     check_results_with_file("object_descriptor", $result);
 };
 
+subtest "Scalar rendering" => sub {
+    setup_debugger();
+
+    # A number that was also used as a string keeps IOK/NOK while gaining POK: it must still render
+    # as a number, matching its runtime numeric semantics (see Camelcade/Perl5-IDEA#3198).
+    my $stringified_number = 100;
+    my $ignore = "$stringified_number";
+
+    # A numeric-looking string mutated in numeric context stores the IV back and becomes a number.
+    my $numified_string = "42";
+    $numified_string += 0;
+
+    my %values = (
+        a_integer          => 42,
+        b_negative_integer => -7,
+        c_zero             => 0,
+        d_float            => 3.5,
+        e_negative_float   => -0.5,
+        f_string           => "hello",
+        g_numeric_string   => "42",           # POK only: a string that looks like a number, stays quoted
+        h_float_string     => "3.5",          # POK only
+        i_stringified_num  => $stringified_number, # IOK + POK: still a number
+        j_numified_string  => $numified_string,    # POK + IOK after numeric mutation: shown as a number
+        k_undef            => undef,
+        l_utf8_string      => "\x{2603}",
+    );
+
+    my $hash_descriptor = DB::_get_reference_descriptor("values", \%values);
+    my $subelements = DB::_compute_reference_subelements({
+        offset => 0,
+        limit  => 100,
+        key    => $hash_descriptor->{key}
+    });
+
+    my $result = "Hash subelements (SCALAR ref branch):\n" . Dumper($subelements);
+
+    # Raw scalar values go through the non-reference branch of _get_reference_descriptor.
+    my @raw_cases = (
+        [ integer        => 42 ],
+        [ float          => 3.5 ],
+        [ string         => "hello" ],
+        [ numeric_string => "42" ],
+        [ undef_value    => undef ],
+    );
+    $result .= "\nRaw scalars (non-reference branch):\n";
+    $result .= Dumper([ map DB::_get_reference_descriptor(@$_), @raw_cases ]);
+
+    check_results_with_file("scalar_rendering", $result);
+};
+
 done_testing();

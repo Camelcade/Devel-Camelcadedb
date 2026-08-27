@@ -1,0 +1,194 @@
+Hash subelements (SCALAR ref branch):
+$VAR1 = [
+          {
+            'blessed' => \0,
+            'expandable' => \0,
+            'is_utf' => \0,
+            'key' => 'SCALAR(...)',
+            'name' => '\'a_integer\'',
+            'ref_depth' => 0,
+            'size' => 0,
+            'type' => 'SCALAR(...)',
+            'value' => '42'
+          },
+          {
+            'blessed' => \0,
+            'expandable' => \0,
+            'is_utf' => \0,
+            'key' => 'SCALAR(...)',
+            'name' => '\'b_negative_integer\'',
+            'ref_depth' => 0,
+            'size' => 0,
+            'type' => 'SCALAR(...)',
+            'value' => '-7'
+          },
+          {
+            'blessed' => \0,
+            'expandable' => \0,
+            'is_utf' => \0,
+            'key' => 'SCALAR(...)',
+            'name' => '\'c_zero\'',
+            'ref_depth' => 0,
+            'size' => 0,
+            'type' => 'SCALAR(...)',
+            'value' => '0'
+          },
+          {
+            'blessed' => \0,
+            'expandable' => \0,
+            'is_utf' => \0,
+            'key' => 'SCALAR(...)',
+            'name' => '\'d_float\'',
+            'ref_depth' => 0,
+            'size' => 0,
+            'type' => 'SCALAR(...)',
+            'value' => '3.5'
+          },
+          {
+            'blessed' => \0,
+            'expandable' => \0,
+            'is_utf' => \0,
+            'key' => 'SCALAR(...)',
+            'name' => '\'e_negative_float\'',
+            'ref_depth' => 0,
+            'size' => 0,
+            'type' => 'SCALAR(...)',
+            'value' => '-0.5'
+          },
+          {
+            'blessed' => \0,
+            'expandable' => \0,
+            'is_utf' => \0,
+            'key' => 'SCALAR(...)',
+            'name' => '\'f_string\'',
+            'ref_depth' => 0,
+            'size' => 0,
+            'type' => 'SCALAR(...)',
+            'value' => '"hello"'
+          },
+          {
+            'blessed' => \0,
+            'expandable' => \0,
+            'is_utf' => \0,
+            'key' => 'SCALAR(...)',
+            'name' => '\'g_numeric_string\'',
+            'ref_depth' => 0,
+            'size' => 0,
+            'type' => 'SCALAR(...)',
+            'value' => '"42"'
+          },
+          {
+            'blessed' => \0,
+            'expandable' => \0,
+            'is_utf' => \0,
+            'key' => 'SCALAR(...)',
+            'name' => '\'h_float_string\'',
+            'ref_depth' => 0,
+            'size' => 0,
+            'type' => 'SCALAR(...)',
+            'value' => '"3.5"'
+          },
+          {
+            'blessed' => \0,
+            'expandable' => \0,
+            'is_utf' => \0,
+            'key' => 'SCALAR(...)',
+            'name' => '\'i_stringified_num\'',
+            'ref_depth' => 0,
+            'size' => 0,
+            'type' => 'SCALAR(...)',
+            'value' => '100'
+          },
+          {
+            'blessed' => \0,
+            'expandable' => \0,
+            'is_utf' => \0,
+            'key' => 'SCALAR(...)',
+            'name' => '\'j_numified_string\'',
+            'ref_depth' => 0,
+            'size' => 0,
+            'type' => 'SCALAR(...)',
+            'value' => '42'
+          },
+          {
+            'blessed' => \0,
+            'expandable' => \0,
+            'is_utf' => \0,
+            'key' => 'SCALAR(...)',
+            'name' => '\'k_undef\'',
+            'ref_depth' => 0,
+            'size' => 0,
+            'type' => 'SCALAR(...)',
+            'value' => 'undef'
+          },
+          {
+            'blessed' => \0,
+            'expandable' => \0,
+            'is_utf' => \1,
+            'key' => 'SCALAR(...)',
+            'name' => '\'l_utf8_string\'',
+            'ref_depth' => 0,
+            'size' => 0,
+            'type' => 'SCALAR(...)',
+            'value' => '"☃"'
+          }
+        ];
+
+Raw scalars (non-reference branch):
+$VAR1 = [
+          {
+            'blessed' => \0,
+            'expandable' => \0,
+            'is_utf' => \0,
+            'key' => '42',
+            'name' => 'integer',
+            'ref_depth' => 0,
+            'size' => 0,
+            'type' => 'SCALAR',
+            'value' => '42'
+          },
+          {
+            'blessed' => \0,
+            'expandable' => \0,
+            'is_utf' => \0,
+            'key' => '3.5',
+            'name' => 'float',
+            'ref_depth' => 0,
+            'size' => 0,
+            'type' => 'SCALAR',
+            'value' => '3.5'
+          },
+          {
+            'blessed' => \0,
+            'expandable' => \0,
+            'is_utf' => \0,
+            'key' => 'hello',
+            'name' => 'string',
+            'ref_depth' => 0,
+            'size' => 0,
+            'type' => 'SCALAR',
+            'value' => '"hello"'
+          },
+          {
+            'blessed' => \0,
+            'expandable' => \0,
+            'is_utf' => \0,
+            'key' => '42',
+            'name' => 'numeric_string',
+            'ref_depth' => 0,
+            'size' => 0,
+            'type' => 'SCALAR',
+            'value' => '"42"'
+          },
+          {
+            'blessed' => \0,
+            'expandable' => \0,
+            'is_utf' => \0,
+            'key' => 'undef',
+            'name' => 'undef_value',
+            'ref_depth' => 0,
+            'size' => 0,
+            'type' => 'SCALAR',
+            'value' => 'undef'
+          }
+        ];
