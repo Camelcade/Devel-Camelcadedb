@@ -29,7 +29,7 @@ $VAR1 = [
             'ref_depth' => 0,
             'size' => 0,
             'type' => 'SCALAR(...)',
-            'value' => '"0"'
+            'value' => '0'
           },
           {
             'blessed' => \0,
@@ -62,7 +62,7 @@ $VAR1 = [
             'ref_depth' => 0,
             'size' => 0,
             'type' => 'SCALAR(...)',
-            'value' => '"42"'
+            'value' => '42'
           },
           {
             'blessed' => \0,
@@ -122,6 +122,6 @@ $VAR1 = [
             'ref_depth' => 0,
             'size' => 0,
             'type' => 'SCALAR(...)',
-            'value' => '"42"'
+            'value' => '42'
           }
         ];

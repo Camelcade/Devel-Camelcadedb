@@ -22,6 +22,7 @@ use Encode;
 use overload;
 use PerlIO;
 use Hash::StoredIterator;
+use B qw/svref_2object SVf_IOK SVf_NOK/;
 #use Carp;
 
 #sub FLAG_REPORT_GOTO() {0x80;}
@@ -538,6 +539,16 @@ sub _from_utf8
     return $value;
 }
 
+# Returns true if the scalar behind the given reference holds a number rather than a string.
+# We rely on the SV's IOK/NOK flags (the same ones Devel::Peek reports) instead of the stringified
+# content: a value is a string only when it is POK without any numeric flag. This mirrors the runtime
+# semantics that distinguish e.g. string vs numeric bitwise `&` (see Camelcade/Perl5-IDEA#3198).
+sub _is_numeric_scalar
+{
+    my ($scalar_ref) = @_;
+    return svref_2object( $scalar_ref )->FLAGS & (SVf_IOK | SVf_NOK);
+}
+
 sub _get_reference_descriptor
 {
     my ($name, $value) = @_;
@@ -564,14 +575,18 @@ sub _get_reference_descriptor
         $type = "SCALAR";
         $tied = tied $value;
         $is_utf = defined $value && utf8::is_utf8( $value ) ? \1 : \0;
-        $value = defined $value ? "\"$value\"" : 'undef'; #_escape_scalar(
+        $value = !defined $value ? 'undef'
+            : _is_numeric_scalar( \$value ) ? "$value"
+            : "\"$value\""; #_escape_scalar(
         $key //= 'undef';
     }
     elsif ($reftype eq 'SCALAR')
     {
         $tied = tied $$value;
         $is_utf = defined $$value && utf8::is_utf8( $$value ) ? \1 : \0;
-        $value = defined $$value ? "\"$$value\"" : 'undef'; #_escape_scalar(
+        $value = !defined $$value ? 'undef'
+            : _is_numeric_scalar( $value ) ? "$$value"
+            : "\"$$value\""; #_escape_scalar(
     }
     elsif ($reftype eq 'REF') {
         $type = overload::StrVal($$value) || 'unknown';
