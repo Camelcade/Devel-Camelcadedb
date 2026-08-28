@@ -1,5 +1,8 @@
 Revision history for Devel-Camelcadedb
 
+2026.1
+        Render numeric scalars without quotes, Camelcade/Perl5-IDEA#3198
+
 2023.1
         Fixed spammy `BREAKPOINT_SET` events sent to the IDE, 61
         Introduced `CAMELCADEDB_DEV_MODE` environment variable to enable dev mode with verbose output, #61
