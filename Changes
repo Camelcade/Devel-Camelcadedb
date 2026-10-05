@@ -1,6 +1,9 @@
 Revision history for Devel-Camelcadedb
 
 2026.1
+        Removed unnecessary files from distro
+
+2026.1
         Render numeric scalars without quotes, Camelcade/Perl5-IDEA#3198
 
 2023.1
