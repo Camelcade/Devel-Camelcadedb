@@ -7,3 +7,4 @@
 *.iml
 /.idea/
 !/.idea/vcs.xml
+/local/
